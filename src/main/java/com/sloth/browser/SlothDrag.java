@@ -20,6 +20,7 @@ final class SlothDrag implements View.OnTouchListener {
     private float downX, downY, lastY;
     private long lastT;
     private boolean dragging;
+    private float total;
 
     SlothDrag(SlothBar.Listener listener) {
         this.listener = listener;
@@ -52,6 +53,7 @@ final class SlothDrag implements View.OnTouchListener {
                         return false;
                     }
                     dragging = true;
+                    total = 0f;
                     if (view.getParent() != null) {
                         // the scroller must stop treating this as its own flick
                         view.getParent().requestDisallowInterceptTouchEvent(true);
@@ -69,8 +71,12 @@ final class SlothDrag implements View.OnTouchListener {
                 float step = event.getY() - lastY;
                 lastY = event.getY();
                 lastT = event.getEventTime();
+                // the shell positions the sheet from the travel since the claim, not from the
+                // last sample: handing it a per-move delta reset the height every time, which
+                // is why a drag on the strip moved the sheet by one step and then stopped
+                total += step;
                 if (listener != null) {
-                    listener.onDrag(step);
+                    listener.onDrag(total);
                 }
                 return true;
             }

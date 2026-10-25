@@ -442,6 +442,37 @@ public class SlothShellTest {
         assertTrue("diagnostics prints it: " + report, report.contains("last drag:"));
     }
 
+    /** The strip the status icons sit on is ours, in the panel's colour, with matching glyphs. */
+    @Test
+    public void theStatusStripIsPaintedInThePanelsOwnColour() throws Exception {
+        TestActivity activity = build();
+        SlothShell.own(activity);
+        settle();
+
+        ViewGroup root = overlayOf(activity);
+        View scrim = findByViewTag(root, "status-scrim");
+        assertNotNull("no status strip was painted", scrim);
+        assertEquals("the strip is the status bar's height",
+                SlothShell.statusForTest(), scrim.getLayoutParams().height);
+        android.graphics.drawable.ColorDrawable bg =
+                (android.graphics.drawable.ColorDrawable) scrim.getBackground();
+        assertEquals("in the panel's colour, not the system's", SlothTheme.surface(), bg.getColor());
+        boolean light = SlothShell.statusIconsLight;
+        assertTrue("glyphs are pointed the right way for that colour",
+                light == (SlothTheme.surface() > 0xFF808080));
+    }
+
+    /** One fill, on one surface: the bar must not paint a second rounded rect inside it. */
+    @Test
+    public void theBarDoesNotPaintASecondFill() throws Exception {
+        TestActivity activity = build();
+        SlothShell.own(activity);
+        View bar = findByViewTag(overlayOf(activity), "drag");
+        assertNull("the bar carries its own background again", bar.getBackground());
+        View surface = findByViewTag(overlayOf(activity), "surface");
+        assertNotNull("and the surface carries the fill", surface.getBackground());
+    }
+
     private View findByViewTag(View v, String tag) {
         if (tag.equals(v.getTag())) {
             return v;
@@ -1023,7 +1054,7 @@ public class SlothShellTest {
         SlothShell.own(activity);
 
         final View[] reload = new View[1];
-        walk(overlayOf(activity).getChildAt(0), new ViewVisitor() {
+        walk(findByViewTag(overlayOf(activity), "surface"), new ViewVisitor() {
             @Override
             public void visit(View v) {
                 if ("Reload".equals(String.valueOf(v.getContentDescription()))) {
@@ -2397,6 +2428,33 @@ public class SlothShellTest {
         }
     }
 
+    /** A drag reports the travel since the claim, never just the newest sample. */
+    @Test
+    public void aStripDragReportsTotalTravelNotTheLastStep() throws Exception {
+        TestActivity activity = build();
+        final float[] reported = new float[1];
+        final boolean[] started = new boolean[1];
+        SlothDrag drag = new SlothDrag(new SlothBar.Listener() {
+            @Override public void onDragStart(float y, float carry) { started[0] = true; }
+            @Override public void onDrag(float dy) { reported[0] = dy; }
+            @Override public void onRelease(float velocity) { }
+            @Override public boolean onSwipe(float dx) { return false; }
+            @Override public void onTap() { }
+        });
+        View probe = new View(activity);
+        long t = SystemClock.uptimeMillis();
+        drag.onTouch(probe, MotionEvent.obtain(t, t, MotionEvent.ACTION_DOWN, 100f, 400f, 0));
+        for (int i = 1; i <= 3; i++) {
+            drag.onTouch(probe, MotionEvent.obtain(t, t + i * 16L,
+                    MotionEvent.ACTION_MOVE, 100f, 400f - i * 50f, 0));
+        }
+        assertTrue("the drag was claimed", started[0]);
+        // the move that claims the gesture is the claim, and the strip does not carry that
+        // travel; the two moves after it must still add up, which is what used to fail
+        assertEquals("the travel after the claim is carried whole",
+                -100f, reported[0], 0.5f);
+    }
+
     private void drag(View target, float fromY, float toY) {
         long t = android.os.SystemClock.uptimeMillis();
         target.dispatchTouchEvent(MotionEvent.obtain(t, t, MotionEvent.ACTION_DOWN, 200f, fromY, 0));
@@ -2651,8 +2709,10 @@ public class SlothShellTest {
         SlothShell.own(activity);
         settle();
         View bar = findByViewTag(overlayOf(activity), "bar");
-        android.graphics.drawable.Drawable closed = bar.getBackground();
-        assertNotNull(closed);
+        View surface = findByViewTag(overlayOf(activity), "surface");
+        assertNull("the bar paints no fill of its own", bar.getBackground());
+        android.graphics.drawable.Drawable fill = surface.getBackground();
+        assertNotNull("the one fill is on the surface", fill);
 
         View handle = findByViewTag(overlayOf(activity), "drag");
         long t = SystemClock.uptimeMillis();
@@ -2660,8 +2720,10 @@ public class SlothShellTest {
         handle.dispatchTouchEvent(MotionEvent.obtain(t, t + 40, MotionEvent.ACTION_UP, 200f, 400f, 0));
         settle();
 
-        assertTrue("open, the bar is repainted as the top half of one panel",
-                closed != findByViewTag(overlayOf(activity), "bar").getBackground());
+        assertTrue("and it is the same fill once the panel is open",
+                fill == findByViewTag(overlayOf(activity), "surface").getBackground());
+        assertNull("the bar still paints nothing",
+                findByViewTag(overlayOf(activity), "bar").getBackground());
     }
 
     @Test
@@ -2703,17 +2765,25 @@ public class SlothShellTest {
         settle();
         driveHeightSafe2(activity, 520);
         settle();
-        View grip = findByViewTag(drawerOf(activity), "grip");
-        assertNotNull("a grabber above the list", grip);
+        // the grabber band is gone with the unification: the strip is the handle now, and a
+        // flick on it must still shut the sheet
+        View strip = findByViewTag(drawerOf(activity), "peek-strip");
+        assertNotNull("a strip to flick", strip);
+        assertNull("and no invisible grabber band above the content",
+                findByViewTag(drawerOf(activity), "grip"));
 
+        // a real flick: the speed is measured over the last step, so the finger has to keep
+        // moving into the lift-off, not stop dead before it
         long t = SystemClock.uptimeMillis();
-        grip.dispatchTouchEvent(MotionEvent.obtain(t, t, MotionEvent.ACTION_DOWN, 300f, 12f, 0));
-        for (int i = 1; i <= 5; i++) {
-            grip.dispatchTouchEvent(MotionEvent.obtain(t, t + i * 12L,
-                    MotionEvent.ACTION_MOVE, 300f, 12f - i * 90f, 0));
+        strip.dispatchTouchEvent(MotionEvent.obtain(t, t, MotionEvent.ACTION_DOWN, 300f, 40f, 0));
+        for (int i = 1; i <= 6; i++) {
+            strip.dispatchTouchEvent(MotionEvent.obtain(t, t + i * 16L,
+                    MotionEvent.ACTION_MOVE, 300f, 40f - i * 70f, 0));
         }
-        grip.dispatchTouchEvent(MotionEvent.obtain(t, t + 70L, MotionEvent.ACTION_UP, 300f, -438f, 0));
+        strip.dispatchTouchEvent(MotionEvent.obtain(t, t + 6 * 16L + 8L,
+                MotionEvent.ACTION_UP, 300f, -490f, 0));
         settle();
+
 
         assertEquals("a flick up on the grabber closes the drawer", 0,
                 drawerOf(activity).getLayoutParams().height);
@@ -2999,7 +3069,7 @@ public class SlothShellTest {
         assertEquals("the list is up", View.VISIBLE, picker.getVisibility());
 
         // shutting the drawer by hand, the way a person would
-        View grip = findByViewTag(drawerOf(activity), "grip");
+        View grip = findByViewTag(drawerOf(activity), "peek-strip");
         long t = SystemClock.uptimeMillis();
         grip.dispatchTouchEvent(MotionEvent.obtain(t, t, MotionEvent.ACTION_DOWN, 200f, 600f, 0));
         grip.dispatchTouchEvent(MotionEvent.obtain(t, t + 40, MotionEvent.ACTION_MOVE, 200f, 200f, 0));

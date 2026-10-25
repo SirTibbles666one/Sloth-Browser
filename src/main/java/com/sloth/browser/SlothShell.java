@@ -106,7 +106,6 @@ public final class SlothShell {
     private static final java.util.ArrayList<View> chromeViews = new java.util.ArrayList<>();
     /** 1 when collapsed, →0 as the drawer takes over the surface. */
     private static float chromeFade = 1f;
-    private static View barDivider;
     /** The drawer footer is pinned, so it must not appear before there is room for it. */
     private static View footRow;
     /** Swatches for every palette; the chip opens this instead of cycling ten times. */
@@ -121,7 +120,9 @@ public final class SlothShell {
     /** Windows whose callback already carries the fallback wrapper. */
     private static final java.util.WeakHashMap<Activity, Boolean> callbackInstalled =
             new java.util.WeakHashMap<>();
-    private static View fadeView;
+    private static View statusScrim;
+    /** True when the status bar glyphs were asked to be dark, for the harness. */
+    static boolean statusIconsLight;
     private static View barView;
     /** The painted scene, kept so it can be told how far out the drawer is. */
     private static SlothBackdrop backdropView;
@@ -424,9 +425,7 @@ public final class SlothShell {
         scroller = null;
         backGlyph = null;
         fwdGlyph = null;
-        barDivider = null;
         footRow = null;
-        fadeView = null;
         barView = null;
         barWrapView = null;
         paletteSheet = null;
@@ -541,6 +540,19 @@ public final class SlothShell {
             surfaceLp.rightMargin = inset;
             surface.setLayoutParams(surfaceLp);
             surfaceSized = false;
+            // The status bar strip belongs to the app, and on Android 15 the platform paints
+            // it edge to edge: leaving it to the system gives a band of a different colour
+            // above a panel that is ours. Paint it in the panel's own colour and tell the
+            // platform which way the glyphs must point.
+            View scrim = new View(activity);
+            scrim.setTag("status-scrim");
+            scrim.setBackgroundColor(SlothTheme.surface());
+            scrim.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);
+            FrameLayout.LayoutParams scrimLp = new FrameLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT, Math.max(0, statusInset), Gravity.TOP);
+            root.addView(scrim, scrimLp);
+            statusScrim = scrim;
+            paintStatusBar(activity);
             root.addView(surface);
 
             // the scene sits behind the whole panel, so the bar and the drawer are the
@@ -583,7 +595,6 @@ public final class SlothShell {
                     ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
             // no rule between the bar and the dashboard: a divider is the cheapest way to
             // say "two things", which is the opposite of what this surface is
-            barDivider = null;
 
             final SlothBar.Listener shellDrag = new SlothBar.Listener() {
                 @Override
@@ -659,6 +670,14 @@ public final class SlothShell {
                     traceVelocity = velocity;
                     traceFlicked = Math.abs(velocity) > 0.55f;
                     traceMs = android.os.SystemClock.uptimeMillis() - traceMs;
+                    // The last sample of a gesture may never have reached a frame: coalescing
+                    // keeps one sample per loop turn, and a finger that lifts between two
+                    // turns leaves its final travel unapplied. Apply it here, before the target
+                    // is chosen, or the sheet settles from a height the finger already left.
+                    if (dragPending != Integer.MIN_VALUE) {
+                        setDrawerHeight(activity, Math.max(0, Math.min(dragPending, fullHeight(activity))));
+                        dragPending = Integer.MIN_VALUE;
+                    }
                     // the commit: the page takes its real offset once, now that the finger is up
                     if (appRootPadTop >= 0) {
                         alignPageToBar(activity, drawer == null ? 0 : drawer.getLayoutParams().height, false);
@@ -697,19 +716,6 @@ public final class SlothShell {
         // between the resting sizes the drawer is mid-drag and will cut something in
         // half. A short fade at its bottom edge makes that read as "more below" rather
         // than as a broken card.
-        View fade = new View(activity);
-        fade.setTag("fade");
-        android.graphics.drawable.GradientDrawable fadeDrawable = new android.graphics.drawable.GradientDrawable(
-                android.graphics.drawable.GradientDrawable.Orientation.TOP_BOTTOM,
-                new int[]{0x00FFFFFF & SlothTheme.bg(), SlothTheme.bg()});
-        fade.setBackground(fadeDrawable);
-        fade.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);
-        fade.setVisibility(View.GONE);
-        FrameLayout.LayoutParams fadeLp = new FrameLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, dp(activity, 26));
-        fadeLp.gravity = Gravity.BOTTOM;
-        fadeLp.bottomMargin = navInset(activity);
-        fadeView = fade;
             sheet.setVisibility(View.GONE);
 
             // the reworked dashboard owns the drawer surface
@@ -849,17 +855,7 @@ public final class SlothShell {
             footRow = foot;
             // no fade band and no grabber inside the sheet: the header above it is the
             // handle, and a fade says the panel is cut rather than continued
-            fadeView = null;
             holder.addView(foot);
-            SlothBar grip = new SlothBar(activity);
-            grip.setTag("grip");
-            grip.setListener(shellDrag);
-            // the grip exists only as the drag surface's own child; it draws nothing
-            LinearLayout gripRow = new LinearLayout(activity);
-            gripRow.setOrientation(LinearLayout.VERTICAL);
-            gripRow.setGravity(Gravity.CENTER_HORIZONTAL);
-            grip.addView(gripRow, new LinearLayout.LayoutParams(
-                    ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
             sheet.addView(holder, new FrameLayout.LayoutParams(
                     ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
             if (holder.getLayoutParams() instanceof FrameLayout.LayoutParams) {
@@ -868,8 +864,6 @@ public final class SlothShell {
                 // empty strip that keeps being reported
                 ((FrameLayout.LayoutParams) holder.getLayoutParams()).topMargin = 0;
             }
-            sheet.addView(grip, new FrameLayout.LayoutParams(
-                    ViewGroup.LayoutParams.MATCH_PARENT, dp(activity, 12), Gravity.TOP));
             // the seam: a shadow and a hinge line, drawn over everything in the sheet so
             // the drawer reads as a surface lifted over the page rather than a flat panel
             // No hinge line, no grabber band, no fade: the surface is one shape with one
@@ -884,6 +878,11 @@ public final class SlothShell {
             drawer = sheet;
 
             statusInset = statusBarHeight(activity);
+            // the strip was built before the insets were known: paint it to the height we
+            // just measured, or it stays a zero-height band for the life of the window
+            if (statusScrim != null) {
+                paintStatusBar(activity);
+            }
             // the peek is the strip: grip, one row. refinePeek() may adjust it once the
             // board has measured itself, but the ceiling is the strip, not a dashboard
             peekPx = dp(activity, 72);
@@ -984,7 +983,9 @@ public final class SlothShell {
         bar.setGravity(Gravity.CENTER_VERTICAL);
         bar.setPadding(dp(activity, 4), 0, dp(activity, 4), 0);
         bar.setElevation(dp(activity, 6));
-        bar.setBackground(capsule(activity));
+        // the surface owns the only fill: a bar with its own capsule draws a second
+        // rounded rect inside the panel, which is a bar inside a box again
+        bar.setBackground(null);
 
         FrameLayout.LayoutParams barLp = new FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, dp(activity, 56), Gravity.TOP);
@@ -1883,6 +1884,16 @@ public final class SlothShell {
         return false;
     }
 
+    /** The peek seat as measured, for the harness. */
+    static int peekForTest(Activity activity) {
+        return peekPx;
+    }
+
+    /** The status bar's height as the shell measured it, for the harness. */
+    static int statusForTest() {
+        return statusInset;
+    }
+
     /** The last drag as a line of numbers, for the harness and for me. */
     static String dragTraceForTest() {
         return traceFrom + "->" + tracePeak + " moves=" + traceMoves + " v=" + traceVelocity
@@ -2249,14 +2260,6 @@ public final class SlothShell {
     }
 
     /** Deep surface, hairline edge, enough contrast to read against a page. */
-    private static GradientDrawable capsule(Activity activity) {
-        GradientDrawable d = new GradientDrawable(
-                GradientDrawable.Orientation.TOP_BOTTOM,
-                new int[]{SURFACE, BG});
-        d.setCornerRadius(dp(activity, 28));
-        d.setStroke(Math.max(1, dp(activity, 1)), SlothTheme.lineAt(0x33));
-        return d;
-    }
 
     private static View addressPill(final Activity activity) {
         LinearLayout pill = new LinearLayout(activity);
@@ -3308,10 +3311,44 @@ public final class SlothShell {
         if (sheetView != null) {
             sheetView.setPadding(0, 0, 0, inset);
         }
-        if (fadeView != null && fadeView.getLayoutParams() instanceof FrameLayout.LayoutParams) {
-            FrameLayout.LayoutParams lp = (FrameLayout.LayoutParams) fadeView.getLayoutParams();
-            lp.bottomMargin = inset;
-            fadeView.setLayoutParams(lp);
+    }
+
+    /** Paint the status bar strip in the panel's colour and point the glyphs the right way. */
+    static void paintStatusBar(Activity activity) {
+        int colour = SlothTheme.surface();
+        if (statusScrim != null) {
+            statusScrim.setBackgroundColor(colour);
+            ViewGroup.LayoutParams lp = statusScrim.getLayoutParams();
+            if (lp != null && lp.height != statusInset) {
+                lp.height = Math.max(0, statusInset);
+                statusScrim.setLayoutParams(lp);
+            }
+        }
+        // a light panel needs dark glyphs, and the other way round
+        double l = 0.2126 * ((colour >> 16) & 0xFF) / 255.0
+                + 0.7152 * ((colour >> 8) & 0xFF) / 255.0
+                + 0.0722 * (colour & 0xFF) / 255.0;
+        boolean darkGlyphs = l > 0.55;
+        statusIconsLight = darkGlyphs;
+        Window window = activity.getWindow();
+        if (window == null) {
+            return;
+        }
+        if (android.os.Build.VERSION.SDK_INT >= 30) {
+            android.view.WindowInsetsController controller = window.getInsetsController();
+            if (controller != null) {
+                int mask = android.view.WindowInsetsController.APPEARANCE_LIGHT_STATUS_BARS;
+                controller.setSystemBarsAppearance(darkGlyphs ? mask : 0, mask);
+            }
+        } else {
+            View decor = window.getDecorView();
+            int flags = decor.getSystemUiVisibility();
+            if (darkGlyphs) {
+                flags |= View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR;
+            } else {
+                flags &= ~View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR;
+            }
+            decor.setSystemUiVisibility(flags);
         }
     }
 
