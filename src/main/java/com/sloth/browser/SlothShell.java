@@ -1845,6 +1845,80 @@ public final class SlothShell {
         return pageRelayouts;
     }
 
+    /** Counts ticks so the sweeping work runs every few seconds, not on every beat. */
+    private static int sweepTicks;
+    /** The last leftover reported, so a box that keeps returning is named once per kind. */
+    private static String leftoverReported = "";
+
+    /**
+     * Close what the app left open: its panel, its chrome, and the box around either.
+     *
+     * <p>The app opens its own panel for Bookmarks, History and Downloads, and draws
+     * nothing into it now that those screens are ours. Collapsing the panel alone leaves
+     * the card that held it - a bordered, rounded, completely empty box over the page,
+     * which is exactly what "the bar is still there" looks like in a screenshot.</p>
+     */
+    static void sweepAppLeftovers(Activity activity) {
+        boolean swept = false;
+        if (!settingsOpen) {
+            View panel = resolve(activity, "panel");
+            if (panel != null && panel.getVisibility() == View.VISIBLE) {
+                releasePanel(activity);
+                forgetLeftover(activity, "panel");
+                swept = true;
+            }
+            for (String name : CHROME) {
+                View chrome = resolve(activity, name);
+                if (chrome != null && chrome.getVisibility() != View.GONE) {
+                    collapseView(chrome);
+                    collapseLonelyAncestors(chrome);
+                    forgetLeftover(activity, name);
+                    swept = true;
+                }
+            }
+        }
+        if (swept) {
+            checkLayers("swept the app's leftovers");
+        }
+    }
+
+    private static void forgetLeftover(Activity activity, String what) {
+        if (!what.equals(leftoverReported)) {
+            leftoverReported = what;
+            SlothLog.warn("closed the app's " + what + " again");
+        }
+    }
+
+    /**
+     * Collapse the wrappers that exist only to hold something we just collapsed.
+     *
+     * <p>Stops at the first ancestor that holds anything else, and never climbs past the
+     * activity's content or the shell's own root, so this cannot take a page or the bar
+     * with it.</p>
+     */
+    static void collapseLonelyAncestors(View view) {
+        android.view.ViewParent parent = view == null ? null : view.getParent();
+        for (int level = 0; level < 4 && parent instanceof View; level++) {
+            View up = (View) parent;
+            if (up == surfaceView || up == overlay || up instanceof android.widget.FrameLayout
+                    && "shell-root".equals(String.valueOf(up.getTag()))) {
+                return;
+            }
+            if (!(up instanceof ViewGroup)) {
+                return;
+            }
+            ViewGroup group = (ViewGroup) up;
+            if (group.getChildCount() != 1) {
+                return;
+            }
+            if (up.getId() == android.R.id.content) {
+                return;
+            }
+            collapseView(up);
+            parent = up.getParent();
+        }
+    }
+
     /** Read-only view of the loan flag, for the harness. */
     static boolean settingsOpenForTest() {
         return settingsOpen;
@@ -2045,6 +2119,7 @@ public final class SlothShell {
             View v = resolve(activity, name);
             if (v != null) {
                 collapseView(v);
+                collapseLonelyAncestors(v);
             }
         }
         if (wasOpen) {
@@ -3465,6 +3540,13 @@ public final class SlothShell {
                     // the strip is the tabs: it cannot be a frame behind them
                     fillPeek(activity);
                 }
+            }
+            sweepTicks++;
+            if (sweepTicks % 4 == 0) {
+                // every few seconds, not every tick: the app can open its own panel or
+                // bring its old chrome back after we last collapsed it, and a box left
+                // over the page is the thing the owner keeps photographing
+                sweepAppLeftovers(activity);
             }
         } catch (Throwable t) {
             SlothLog.warn("tick failed: " + t.getClass().getSimpleName());
