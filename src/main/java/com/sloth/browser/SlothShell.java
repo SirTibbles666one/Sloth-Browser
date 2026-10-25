@@ -134,6 +134,9 @@ public final class SlothShell {
     private static int appRootPadBottom = -1;
     /** True once the window was asked to draw under the system bars, for the harness. */
     static boolean edgeToEdge;
+    /** Set when the edge-to-edge window was rejected on evidence and decor fitting restored. */
+    static boolean edgeFellBack;
+    private static boolean edgeChecked;
     /** Height of the system status bar; the shell must not draw over it. */
     private static int statusInset;
     /** Whether the drawer is meant to be open; a stray height without this is debris. */
@@ -2078,6 +2081,8 @@ public final class SlothShell {
                     .append(activity.getResources().getDisplayMetrics().heightPixels)
                     .append(" status=").append(statusInset)
                     .append(" nav=").append(navInset(activity)).append('\n');
+            out.append("window mode: ").append(edgeFellBack ? "fitted (edge-to-edge reverted)"
+                    : edgeToEdge ? "under the bars" : "fitted").append('\n');
             out.append("bar: ").append(barWrapView == null ? -1 : barWrapView.getHeight())
                     .append("px  surface: ").append(surfaceView == null ? -1
                             : surfaceView.getLayoutParams().height)
@@ -3368,6 +3373,61 @@ public final class SlothShell {
         }
     }
 
+    /**
+     * Decide whether the edge-to-edge window actually worked, and put it back if it did not.
+     *
+     * <p>Asking the window to draw under the bars is a request, and on a device where the answer
+     * is different the panel can end up under the strip: a bar with the clock printed on it. The
+     * request cannot be checked before the fact, so it is checked after the first real layout, on
+     * evidence - the panel's own measured position - and reverted rather than argued with.</p>
+     */
+    static boolean needsEdgeFallback(int statusInsetPx, int surfaceTopPx, int surfacePadTopPx) {
+        if (statusInsetPx <= 0) {
+            // a device with no status bar cannot fail this way, and knows nothing yet
+            return false;
+        }
+        // the panel's rim sits at the top of the window by design; it is the panel's content that
+        // must clear the strip. Judging the rim instead would revert a correct window on every
+        // device - which is what the first version of this check did, and a test caught it.
+        return surfaceTopPx + surfacePadTopPx < statusInsetPx;
+    }
+
+    static void checkEdgeWindow(Activity activity) {
+        if (!edgeToEdge || edgeChecked || surfaceView == null || activity == null) {
+            return;
+        }
+        if (surfaceView.getHeight() <= 0) {
+            // not laid out yet: the next tick will have a real position to judge
+            return;
+        }
+        edgeChecked = true;
+        int top = surfaceView.getTop();
+        int padTop = surfaceView.getPaddingTop();
+        if (!needsEdgeFallback(statusInset, top, padTop)) {
+            return;
+        }
+        edgeFellBack = true;
+        edgeToEdge = false;
+        SlothLog.error("the panel sat under the status strip, so the window stopped drawing under "
+                + "the bars: content starts " + (top + padTop) + "px, strip " + statusInset + "px");
+        try {
+            Window window = activity.getWindow();
+            if (window != null) {
+                if (android.os.Build.VERSION.SDK_INT >= 30) {
+                    window.setDecorFitsSystemWindows(true);
+                } else {
+                    View decor = window.getDecorView();
+                    decor.setSystemUiVisibility(decor.getSystemUiVisibility()
+                            & ~(View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN
+                            | View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION));
+                }
+            }
+        } catch (RuntimeException e) {
+            SlothLog.error("could not restore the fitted window");
+        }
+        rebuild(activity);
+    }
+
     /** Paint the status bar strip in the panel's colour and point the glyphs the right way. */
     static void paintStatusBar(Activity activity) {
         int colour = SlothTheme.surface();
@@ -3627,6 +3687,8 @@ public final class SlothShell {
             // engine - and a black window with an address in it is the worst thing to hand
             // someone silently, so the tick checks rather than waits for a report
             ensurePageVisible(activity);
+            // asked once the window is laid out: this is the only evidence the request worked
+            checkEdgeWindow(activity);
             syncHistory(activity);
             if (board != null && address != null) {
                 // the drawer's address line is the same fact as the bar's, so it is kept

@@ -497,6 +497,33 @@ public class SlothShellTest {
                 SlothShell.pagePadBottomForTest() >= SlothShell.navInset(activity));
     }
 
+    /** The edge-to-edge request is judged on evidence, and reverted rather than argued with. */
+    @Test
+    public void aPanelUnderTheStatusStripRevertsTheWindow() {
+        // the rim is at the top of the window in the correct case too: it is the content that
+        // must clear the strip, so the rim alone is never evidence
+        assertFalse("a rim at the top with content cleared is correct",
+                SlothShell.needsEdgeFallback(96, 0, 104));
+        assertTrue("content printed under the clock means the request failed",
+                SlothShell.needsEdgeFallback(96, 0, 40));
+        assertTrue("and so does a panel lifted above the strip",
+                SlothShell.needsEdgeFallback(96, -40, 8));
+        assertFalse("a device without a strip cannot fail this way",
+                SlothShell.needsEdgeFallback(0, 0, 0));
+    }
+
+    /** Falling back is a one-way move for that window: it must not flip back on the next tick. */
+    @Test
+    public void theFallbackIsCheckedOnce() throws Exception {
+        TestActivity activity = build();
+        SlothShell.own(activity);
+        settle();
+        SlothShell.checkEdgeWindow(activity);
+        boolean first = SlothShell.edgeToEdge;
+        SlothShell.checkEdgeWindow(activity);
+        assertEquals("the decision does not change on a later tick", first, SlothShell.edgeToEdge);
+    }
+
     private View findByViewTag(View v, String tag) {
         if (tag.equals(v.getTag())) {
             return v;
