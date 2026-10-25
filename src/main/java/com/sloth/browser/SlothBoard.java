@@ -160,7 +160,11 @@ final class SlothBoard {
 
     /* ------------------------------------------------------------------ build */
     private void build() {
-        root.addView(header());
+        // No masthead. The bar above this panel is the header of the dashboard - it carries
+        // the address, the controls and the way out - so a second title with its own close
+        // button was the clearest remaining sign that these were two surfaces pretending to
+        // be one.
+        root.setTag("board");
 
         site = text("", 12f, DIM, false);
         site.setSingleLine(true);

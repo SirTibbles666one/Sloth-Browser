@@ -36,6 +36,11 @@ final class SlothIcons extends View {
         setFocusable(true);
     }
 
+    /** Which control this is, so a test can prove the cross is a cross. */
+    Kind kind() {
+        return kind;
+    }
+
     /** A control of the given size, in the palette's ink unless told otherwise. */
     static SlothIcons of(Context context, Kind kind, int sizeDp, int colour) {
         SlothIcons icon = new SlothIcons(context, kind);

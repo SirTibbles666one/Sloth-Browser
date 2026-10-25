@@ -504,10 +504,27 @@ public final class SlothShell {
                 }
             });
             surface.setElevation(dp(activity, 10));
+            // ONE shape, set once: the surface is a slab with the same radius whether it is
+            // a bar or a full dashboard. It used to swap between a capsule and a slab as it
+            // opened, and a shape that changes halfway is what made it read as two boxes.
+            GradientDrawable slab = new GradientDrawable();
+            slab.setColor(SlothTheme.surface());
+            int topRadius = dp(activity, 26);
+            int bottomRadius = dp(activity, 26);
+            slab.setCornerRadii(new float[]{topRadius, topRadius, topRadius, topRadius,
+                    bottomRadius, bottomRadius, bottomRadius, bottomRadius});
+            surface.setBackground(slab);
             surfaceView = surface;
-            surface.setLayoutParams(new FrameLayout.LayoutParams(
+            FrameLayout.LayoutParams surfaceLp = new FrameLayout.LayoutParams(
                     ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT,
-                    Gravity.TOP));
+                    Gravity.TOP);
+            // the same inset at every height: one card that grows, never a bar that becomes a
+            // sheet. The margins are the only thing that makes a floating panel read as
+            // floating, and they do not change as it opens.
+            int inset = dp(activity, 6);
+            surfaceLp.leftMargin = inset;
+            surfaceLp.rightMargin = inset;
+            surface.setLayoutParams(surfaceLp);
             surfaceSized = false;
             root.addView(surface);
 
@@ -549,11 +566,9 @@ public final class SlothShell {
                     ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
             column.addView(barWrap, new LinearLayout.LayoutParams(
                     ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
-            barDivider = new View(activity);
-            barDivider.setBackgroundColor(SlothTheme.lineAt(0x59));
-            barDivider.setAlpha(0f);
-            column.addView(barDivider, new LinearLayout.LayoutParams(
-                    ViewGroup.LayoutParams.MATCH_PARENT, Math.max(1, dp(activity, 1))));
+            // no rule between the bar and the dashboard: a divider is the cheapest way to
+            // say "two things", which is the opposite of what this surface is
+            barDivider = null;
 
             final SlothBar.Listener shellDrag = new SlothBar.Listener() {
                 @Override
@@ -805,34 +820,35 @@ public final class SlothShell {
             diagPage.setVisibility(View.GONE);
             paletteSheet = palettePicker(activity);
             footRow = foot;
-            if (fadeView != null) {
-                sheet.addView(fadeView, fadeLp(activity));
-            }
+            // no fade band and no grabber inside the sheet: the header above it is the
+            // handle, and a fade says the panel is cut rather than continued
+            fadeView = null;
             holder.addView(foot);
             SlothBar grip = new SlothBar(activity);
             grip.setTag("grip");
             grip.setListener(shellDrag);
+            // the grip exists only as the drag surface's own child; it draws nothing
             LinearLayout gripRow = new LinearLayout(activity);
             gripRow.setOrientation(LinearLayout.VERTICAL);
             gripRow.setGravity(Gravity.CENTER_HORIZONTAL);
-            // no second line here: the seam's hinge line is the mark, and it grows with
-            // the sheet - two lines at the same edge read as a mistake, not a handle
             grip.addView(gripRow, new LinearLayout.LayoutParams(
                     ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
             sheet.addView(holder, new FrameLayout.LayoutParams(
                     ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
             if (holder.getLayoutParams() instanceof FrameLayout.LayoutParams) {
-                ((FrameLayout.LayoutParams) holder.getLayoutParams()).topMargin = dp(activity, 20);
+                // the content starts at the top of the sheet: the 20dp band above it was
+                // there for a grabber, and a band of panel with nothing in it is exactly the
+                // empty strip that keeps being reported
+                ((FrameLayout.LayoutParams) holder.getLayoutParams()).topMargin = 0;
             }
             sheet.addView(grip, new FrameLayout.LayoutParams(
-                    ViewGroup.LayoutParams.MATCH_PARENT, dp(activity, 20), Gravity.TOP));
+                    ViewGroup.LayoutParams.MATCH_PARENT, dp(activity, 12), Gravity.TOP));
             // the seam: a shadow and a hinge line, drawn over everything in the sheet so
             // the drawer reads as a surface lifted over the page rather than a flat panel
-            SlothEdge edge = new SlothEdge(activity);
-            edge.setTag("seam");
-            edgeView = edge;
-            sheet.addView(edge, new FrameLayout.LayoutParams(
-                    ViewGroup.LayoutParams.MATCH_PARENT, dp(activity, 22), Gravity.TOP));
+            // No hinge line, no grabber band, no fade: the surface is one shape with one
+            // fill, so the seam between the header and the dashboard is not drawn at all.
+            // SlothEdge is kept in the tree as a class but nothing constructs it here.
+            edgeView = null;
             if (paletteSheet != null) {
                 // added last so it covers the drawer content rather than sitting under it
                 sheet.addView(paletteSheet);
@@ -2543,25 +2559,11 @@ public final class SlothShell {
             return;
         }
         unionOpen = open;
-        int r = dp(activity, 28);
-        if (open) {
-            barView.setBackground(null);
-            panelShape(activity, true);
-            if (drawer != null) {
-                GradientDrawable body = new GradientDrawable();
-                body.setCornerRadii(new float[]{0, 0, 0, 0,
-                        dp(activity, SlothTheme.radius()), dp(activity, SlothTheme.radius()),
-                        dp(activity, SlothTheme.radius()), dp(activity, SlothTheme.radius())});
-                body.setColor(SlothTheme.surface());
-                body.setStroke(0, 0);
-                drawer.setBackground(body);
-            }
-            if (barDivider != null) {
-                barDivider.setAlpha(0f);
-            }
-        } else {
-            barView.setBackground(capsule(activity));
-            panelShape(activity, false);
+        // the bar is transparent and the drawer is transparent: there is one fill, on the
+        // surface, so opening the dashboard cannot expose a join between two panels
+        barView.setBackground(null);
+        if (drawer != null) {
+            drawer.setBackground(null);
         }
     }
 
@@ -2611,7 +2613,9 @@ public final class SlothShell {
         if (h > 0 && measuredContentH > 0 && !peekShowing && !dragging) {
             // a sheet does not need to be taller than what it holds - the light render
             // showed the drawer stretched past its content into a band of empty paper
-            int contentCap = measuredContentH + dp(activity, 26);
+            // a little air under the last row, not a band: the panel must not open taller
+            // than what it holds or the extra reads as an empty strip
+            int contentCap = measuredContentH + dp(activity, 10);
             if (contentCap < h) {
                 h = Math.max(dp(activity, 200), contentCap);
             }
@@ -2642,23 +2646,7 @@ public final class SlothShell {
         if (backdropView != null) {
             backdropView.setDepth(h / (float) Math.max(1, expandedPx));
         }
-        if (edgeView != null) {
-            // the sheet is "open" against its resting size, but that size is not known
-            // until the board has measured; before then judge it against the peek
-            int span = expandedPx > 0 ? expandedPx : Math.max(h, peekPx * 3);
-            edgeView.open(h / (float) Math.max(1, span));
-            // the seam is the sheet's, and a shut sheet has no seam to show
-            edgeView.setVisibility(h > dp(activity, 2) ? View.VISIBLE : View.GONE);
-        }
-        if (fadeView != null) {
-            // only when the drawer is caught between resting sizes, where it may cut a row
-            boolean midDrag = h > 0 && Math.abs(h - peekPx) > dp(activity, 6);
-            int wanted = midDrag ? View.VISIBLE : View.GONE;
-            if (fadeView.getVisibility() != wanted) {
-                // per-frame visibility writes force a relayout of the sheet mid-gesture
-                fadeView.setVisibility(wanted);
-            }
-        }
+
         if (was == 0 && h > 0 && board != null) {
             // the cards arrive in sequence rather than all at once
             board.reveal();
@@ -2679,8 +2667,9 @@ public final class SlothShell {
         // rather than as a separate sheet with a footer floating in it.
         float span = Math.max(1f, peekPx);
         float fraction = Math.min(1f, h / span);
-        float recede = Math.max(0f, (fraction - 0.45f) / 0.55f);
-        chromeFade = 1f - 0.80f * Math.min(1f, recede);
+        // the bar does not fade out when the dashboard opens: it is the dashboard's header.
+        // Dimming it to a fifth said "this is a different surface underneath".
+        chromeFade = 1f;
         applyChromeFade();
         if (footRow != null) {
             // the peek shows tabs and actions only; the footer waits for a real open
@@ -2692,9 +2681,6 @@ public final class SlothShell {
         }
         if (drawer instanceof ViewGroup && ((ViewGroup) drawer).getChildCount() > 0) {
             ((ViewGroup) drawer).getChildAt(0).setAlpha(Math.min(1f, 0.35f + fraction));
-        }
-        if (barDivider != null) {
-            barDivider.setAlpha(fraction);
         }
         if (board != null) {
             boolean atPeek = h > 0 && h <= peekPx + dp(activity, 24);
