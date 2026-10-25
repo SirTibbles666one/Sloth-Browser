@@ -18,7 +18,8 @@ import android.view.View;
 final class SlothIcons extends View {
 
     /** The controls the bar carries. */
-    enum Kind { BACK, FORWARD, RELOAD, PLUS, MENU, CLOSE, LOCK, TABS, SEARCH }
+    enum Kind { BACK, FORWARD, RELOAD, PLUS, MENU, CLOSE, LOCK, TABS, SEARCH,
+            HOME, BOOKMARK, CLOCK, DOWNLOAD }
 
     private Kind kind;
     private final Paint paint = new Paint(Paint.ANTI_ALIAS_FLAG);
@@ -47,6 +48,18 @@ final class SlothIcons extends View {
         icon.paint.setColor(colour);
         int px = Math.round(sizeDp * context.getResources().getDisplayMetrics().density);
         icon.setLayoutParams(new android.widget.LinearLayout.LayoutParams(px, px));
+        return icon;
+    }
+
+    /**
+     * The same drawing, as decoration rather than a control: not clickable, not focusable and
+     * invisible to a screen reader, because the cell around it is the control that is spoken.
+     */
+    static SlothIcons decorative(Context context, Kind kind, int sizeDp, int colour) {
+        SlothIcons icon = of(context, kind, sizeDp, colour);
+        icon.setClickable(false);
+        icon.setFocusable(false);
+        icon.setImportantForAccessibility(IMPORTANT_FOR_ACCESSIBILITY_NO);
         return icon;
     }
 
@@ -145,6 +158,50 @@ final class SlothIcons extends View {
                         cx + r * 0.26f, cy + r * 0.42f), r * 0.14f, r * 0.14f, Path.Direction.CW);
                 path.addRoundRect(new android.graphics.RectF(cx - r * 0.26f, cy - r * 0.44f,
                         cx + r * 0.52f, cy + r * 0.28f), r * 0.14f, r * 0.14f, Path.Direction.CW);
+                break;
+            }
+            case HOME: {
+                // a roof, then two walls: the one glyph in the action row that read as a
+                // different font on every phone
+                path.moveTo(cx - r * 0.62f, cy - r * 0.04f);
+                path.lineTo(cx, cy - r * 0.56f);
+                path.lineTo(cx + r * 0.62f, cy - r * 0.04f);
+                path.moveTo(cx - r * 0.44f, cy + r * 0.04f);
+                path.lineTo(cx - r * 0.44f, cy + r * 0.52f);
+                path.lineTo(cx + r * 0.44f, cy + r * 0.52f);
+                path.lineTo(cx + r * 0.44f, cy + r * 0.04f);
+                break;
+            }
+            case BOOKMARK: {
+                // a ribbon: the same shape the app uses, so the two read as one idea
+                path.moveTo(cx - r * 0.38f, cy - r * 0.52f);
+                path.lineTo(cx + r * 0.38f, cy - r * 0.52f);
+                path.lineTo(cx + r * 0.38f, cy + r * 0.54f);
+                path.lineTo(cx, cy + r * 0.24f);
+                path.lineTo(cx - r * 0.38f, cy + r * 0.54f);
+                path.close();
+                break;
+            }
+            case CLOCK: {
+                // history is time, so it is a clock face with two hands
+                path.addCircle(cx, cy, r * 0.52f, Path.Direction.CW);
+                path.moveTo(cx, cy);
+                path.lineTo(cx, cy - r * 0.30f);
+                path.moveTo(cx, cy);
+                path.lineTo(cx + r * 0.26f, cy + r * 0.10f);
+                break;
+            }
+            case DOWNLOAD: {
+                // an arrow into a tray: an arrow alone is "send", not "save"
+                path.moveTo(cx, cy - r * 0.52f);
+                path.lineTo(cx, cy + r * 0.20f);
+                path.moveTo(cx - r * 0.26f, cy - r * 0.06f);
+                path.lineTo(cx, cy + r * 0.20f);
+                path.lineTo(cx + r * 0.26f, cy - r * 0.06f);
+                path.moveTo(cx - r * 0.52f, cy + r * 0.40f);
+                path.lineTo(cx - r * 0.52f, cy + r * 0.56f);
+                path.lineTo(cx + r * 0.52f, cy + r * 0.56f);
+                path.lineTo(cx + r * 0.52f, cy + r * 0.40f);
                 break;
             }
             case CLOSE: {

@@ -524,6 +524,60 @@ public class SlothShellTest {
         assertEquals("the decision does not change on a later tick", first, SlothShell.edgeToEdge);
     }
 
+
+    private View findByDescription(View root, String description) {
+        final View[] found = new View[1];
+        walk(root, new ViewVisitor() {
+            @Override
+            public void visit(View v) {
+                if (found[0] == null && description.equals(String.valueOf(v.getContentDescription()))) {
+                    found[0] = v;
+                }
+            }
+        });
+        return found[0];
+    }
+
+    private SlothIcons firstIcon(View root) {
+        final SlothIcons[] found = new SlothIcons[1];
+        walk(root, new ViewVisitor() {
+            @Override
+            public void visit(View v) {
+                if (found[0] == null && v instanceof SlothIcons) {
+                    found[0] = (SlothIcons) v;
+                }
+            }
+        });
+        return found[0];
+    }
+
+    /** The four quick actions are drawn shapes, not another font's idea of them. */
+    @Test
+    public void theQuickActionsAreDrawnNotTyped() throws Exception {
+        TestActivity activity = build();
+        SlothShell.own(activity);
+        settle();
+
+        java.util.Map<String, SlothIcons.Kind> wanted = new java.util.LinkedHashMap<>();
+        wanted.put("Home", SlothIcons.Kind.HOME);
+        wanted.put("Bookmarks", SlothIcons.Kind.BOOKMARK);
+        wanted.put("History", SlothIcons.Kind.CLOCK);
+        wanted.put("Downloads", SlothIcons.Kind.DOWNLOAD);
+
+        for (java.util.Map.Entry<String, SlothIcons.Kind> e : wanted.entrySet()) {
+            View cell = findByDescription(overlayOf(activity), e.getKey());
+            assertNotNull(e.getKey() + " has a cell", cell);
+            SlothIcons icon = firstIcon(cell);
+            assertNotNull(e.getKey() + " is drawn, not typed", icon);
+            assertEquals(e.getKey() + " draws the right shape", e.getValue(), icon.kind());
+        }
+        // and the characters that used to carry them are gone from the tree
+        String tree = dumpText(overlayOf(activity));
+        assertFalse("no home glyph left: " + tree, tree.contains("\u2302"));
+        assertFalse("no flag glyph left: " + tree, tree.contains("\u2691"));
+        assertFalse("no arrow glyph left: " + tree, tree.contains("\u2193"));
+    }
+
     private View findByViewTag(View v, String tag) {
         if (tag.equals(v.getTag())) {
             return v;

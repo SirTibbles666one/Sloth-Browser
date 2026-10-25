@@ -429,14 +429,16 @@ final class SlothBoard {
 
         // the mock's four quick actions. Home is the app's own home; the other three
         // are the app's own screens, opened the same way Settings is.
-        row.addView(action("\u2302", "Home", "btnHome", false));
-        row.addView(action("\u2691", "Bookmarks", "panel:bookmarks", false));
-        row.addView(action("\u25F4", "History", "panel:history", false));
-        row.addView(action("\u2193", "Downloads", "panel:downloads", false));
+        // drawn, not typed: a text glyph is another font's idea of these four shapes, and the
+        // rest of the shell stopped using them because they arrived as emoji on real phones
+        row.addView(action(SlothIcons.Kind.HOME, "Home", "btnHome", false));
+        row.addView(action(SlothIcons.Kind.BOOKMARK, "Bookmarks", "panel:bookmarks", false));
+        row.addView(action(SlothIcons.Kind.CLOCK, "History", "panel:history", false));
+        row.addView(action(SlothIcons.Kind.DOWNLOAD, "Downloads", "panel:downloads", false));
         return row;
     }
 
-    private View action(String glyph, String name, final String target, boolean primary) {
+    private View action(SlothIcons.Kind kind, String name, final String target, boolean primary) {
         LinearLayout cell = new LinearLayout(activity);
         cell.setOrientation(LinearLayout.VERTICAL);
         cell.setGravity(Gravity.CENTER_HORIZONTAL);
@@ -457,9 +459,14 @@ final class SlothBoard {
             }
         });
 
-        TextView icon = text(glyph, 17f, primary ? ACCENT_INK : INK, true);
-        icon.setGravity(Gravity.CENTER);
+        android.widget.FrameLayout icon = new android.widget.FrameLayout(activity);
         icon.setBackground(outline(12, primary ? ACCENT : SlothTheme.lineAt(0x12), 0));
+        SlothIcons drawn = SlothIcons.decorative(activity, kind, 19,
+                primary ? ACCENT_INK : INK);
+        android.widget.FrameLayout.LayoutParams ilp = new android.widget.FrameLayout.LayoutParams(
+                dp(19), dp(19));
+        ilp.gravity = Gravity.CENTER;
+        icon.addView(drawn, ilp);
         cell.addView(icon, new LinearLayout.LayoutParams(dp(34), dp(34)));
 
         TextView title = text(name, 12f, INK, true);
