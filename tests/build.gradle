@@ -1,0 +1,45 @@
+plugins {
+    id 'com.android.library' version '8.13.0'
+}
+
+android {
+    namespace 'com.sloth.shelltest'
+    compileSdk 36
+
+    defaultConfig {
+        minSdk 26
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+
+    sourceSets {
+        main {
+            java.srcDirs = ['/opt/data/cache/scratch/slothbrowser/patch1120/src',
+                            '/opt/data/cache/scratch/slothbrowser/stubs']
+        }
+    }
+
+    testOptions {
+        unitTests {
+            includeAndroidResources = true
+            returnDefaultValues = true
+        }
+    }
+}
+
+dependencies {
+    testImplementation 'junit:junit:4.13.2'
+    testImplementation 'org.robolectric:robolectric:4.14.1'
+}
+
+tasks.withType(Test).configureEach {
+    testLogging {
+        events 'passed', 'failed', 'skipped'
+        exceptionFormat 'full'
+    }
+    systemProperty 'robolectric.logging', 'stdout'
+    systemProperty 'sloth.shell.debug', 'true'
+}

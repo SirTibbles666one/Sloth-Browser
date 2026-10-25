@@ -1,0 +1,14 @@
+# never in this repository
+build/
+*.apk
+*.aab
+*.idsig
+*.jks
+*.keystore
+local.properties
+.gradle/
+tests/build/
+tests/.gradle/
+
+# scratch the harness writes
+shots/
