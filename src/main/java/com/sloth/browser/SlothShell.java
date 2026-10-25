@@ -155,6 +155,21 @@ public final class SlothShell {
     /** Counters for the diagnostics line: how much work a drag actually did. */
     private static int dragWrites;
     private static int pageRelayouts;
+    /**
+     * The last drag, kept as numbers.
+     *
+     * <p>"It still feels wrong" is the most expensive report this project gets: every one of
+     * them cost a build and a guess, because a drag exists only while a finger is on the
+     * glass. These are the figures that describe one - where it started, how many moves were
+     * applied, where it was released, how fast, and which seat it chose.</p>
+     */
+    private static int traceFrom = -1;
+    private static int traceTo = -1;
+    private static int traceMoves;
+    private static int tracePeak;
+    private static float traceVelocity;
+    private static boolean traceFlicked;
+    private static long traceMs;
 
     /**
      * Which shell an animation belongs to.
@@ -583,6 +598,13 @@ public final class SlothShell {
                     // the gesture, so nothing lurches when the drag begins
                     startH = Math.max(0, h + Math.round(carry));
                     dragging = true;
+                    traceFrom = h;
+                    tracePeak = Math.round(startH);
+                    traceMoves = 0;
+                    traceVelocity = 0f;
+                    traceTo = -1;
+                    traceFlicked = false;
+                    traceMs = android.os.SystemClock.uptimeMillis();
                 }
 
                 @Override
@@ -604,6 +626,8 @@ public final class SlothShell {
                                 if (dragging && dragPending != Integer.MIN_VALUE) {
                                     int h = dragPending;
                                     dragPending = Integer.MIN_VALUE;
+                                    traceMoves++;
+                                    tracePeak = h;
                                     setDrawerHeight(activity, h);
                                 }
                             }
@@ -632,6 +656,9 @@ public final class SlothShell {
                         setDrawerHeight(activity, h);
                     }
                     dragging = false;
+                    traceVelocity = velocity;
+                    traceFlicked = Math.abs(velocity) > 0.55f;
+                    traceMs = android.os.SystemClock.uptimeMillis() - traceMs;
                     // the commit: the page takes its real offset once, now that the finger is up
                     if (appRootPadTop >= 0) {
                         alignPageToBar(activity, drawer == null ? 0 : drawer.getLayoutParams().height, false);
@@ -1856,6 +1883,12 @@ public final class SlothShell {
         return false;
     }
 
+    /** The last drag as a line of numbers, for the harness and for me. */
+    static String dragTraceForTest() {
+        return traceFrom + "->" + tracePeak + " moves=" + traceMoves + " v=" + traceVelocity
+                + " seat=" + traceTo + " ms=" + traceMs;
+    }
+
     /** How many times the page root has been re-laid-out, for the harness. */
     static int pageRelayoutsForTest() {
         return pageRelayouts;
@@ -1994,6 +2027,13 @@ public final class SlothShell {
             // and this is the number that says which
             out.append("drag: ").append(dragWrites).append(" sheet writes, ")
                     .append(pageRelayouts).append(" page relayouts, since the app started\n");
+            out.append("last drag: ").append(traceFrom < 0 ? "none yet"
+                            : traceFrom + " -> " + tracePeak + "px in " + traceMoves
+                            + " moves, " + traceMs + "ms, released at "
+                            + Math.round(traceVelocity * 1000) + "px/s"
+                            + (traceFlicked ? " (flick)" : " (slow)")
+                            + ", settled at " + traceTo + "px")
+                    .append('\n');
             View url = resolve(activity, "urlBar");
             out.append("url: ").append(url instanceof TextView
                     ? String.valueOf(((TextView) url).getText()) : "(no omnibox)").append('\n');
@@ -3184,6 +3224,7 @@ public final class SlothShell {
             }
         }
 
+        traceTo = target;
         animateTo(activity, target);
         rememberOpenSize(activity, target > 0);
     }
