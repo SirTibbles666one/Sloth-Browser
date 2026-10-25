@@ -23,11 +23,16 @@ jobs:
           distribution: temurin
           java-version: '17'
 
+      # The runner image already carries the SDK; setup-android failed here, and a step that
+      # installs what is already present is one more thing that can break for no reason.
       - name: Android SDK
-        uses: android-actions/setup-android@v3
-
-      - name: Platform and build tools
-        run: sdkmanager --install "platforms;android-36" "build-tools;36.0.0" > /dev/null
+        run: |
+          SDK="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-/usr/local/lib/android/sdk}}"
+          echo "ANDROID_HOME=$SDK" >> "$GITHUB_ENV"
+          echo "ANDROID_SDK_ROOT=$SDK" >> "$GITHUB_ENV"
+          echo "$SDK/cmdline-tools/latest/bin" >> "$GITHUB_PATH"
+          yes | "$SDK/cmdline-tools/latest/bin/sdkmanager" --licenses > /dev/null || true
+          "$SDK/cmdline-tools/latest/bin/sdkmanager" --install "platforms;android-36" "build-tools;36.0.0" 
 
       - name: Gradle cache
         uses: actions/cache@v4
@@ -60,6 +65,9 @@ jobs:
 
   names:
     name: reflective names
+    # Needs the base APK, which is the app's own build and is not redistributable. Without
+    # it the job is skipped outright rather than reporting a green run of nothing.
+    if: vars.BASE_APK_URL != ''
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -67,10 +75,7 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
-      # Needs the base APK, which is the app's own build and is not redistributable, so
-      # this runs only where BASE_APK is provided. It is skipped rather than faked.
       - name: shell_refs
-        if: ${{ vars.BASE_APK_URL != '' }}
         run: |
           curl -sSL -o base.apk "${{ vars.BASE_APK_URL }}"
           python3 audit/shell_refs.py base.apk src
