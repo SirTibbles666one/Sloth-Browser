@@ -473,6 +473,30 @@ public class SlothShellTest {
         assertNotNull("and the surface carries the fill", surface.getBackground());
     }
 
+    /** The window draws under the system bars, and nothing is counted twice for it. */
+    @Test
+    public void thePageReachesTheTopOfTheScreenWithoutDoubleCountingTheStatusBar() throws Exception {
+        TestActivity activity = build();
+        SlothShell.own(activity);
+        settle();
+
+        assertTrue("the window was asked to draw under the system bars", SlothShell.edgeToEdge);
+        View surface = findByViewTag(overlayOf(activity), "surface");
+        float density = activity.getResources().getDisplayMetrics().density;
+        assertEquals("the panel keeps its gap below the strip, once",
+                SlothShell.statusForTest() + Math.round(8 * density), surface.getPaddingTop());
+    }
+
+    /** The page clears the nav bar, since the window now runs beneath it. */
+    @Test
+    public void thePageKeepsItsDistanceFromTheNavBar() throws Exception {
+        TestActivity activity = build();
+        SlothShell.own(activity);
+        settle();
+        assertTrue("the page pads its bottom by at least the nav bar",
+                SlothShell.pagePadBottomForTest() >= SlothShell.navInset(activity));
+    }
+
     private View findByViewTag(View v, String tag) {
         if (tag.equals(v.getTag())) {
             return v;
@@ -2567,8 +2591,15 @@ public class SlothShellTest {
     public void theStatusBarTakesTheDrawersColour() {
         TestActivity activity = build();
         SlothTheme.select(activity, 3); // Alabaster, a light palette
-        SlothShell.tintStatusBar(activity);
-        assertEquals("the status bar matches the surface", SlothTheme.bg(),
+        SlothShell.own(activity);
+        settle();
+        // the colour is a view of ours now: the window itself is transparent under it, which
+        // is the only thing that works on Android 15 and the only thing that cannot mismatch
+        View scrim = findByViewTag(overlayOf(activity), "status-scrim");
+        assertNotNull("a strip to paint", scrim);
+        assertEquals("the strip matches the surface", SlothTheme.surface(),
+                ((android.graphics.drawable.ColorDrawable) scrim.getBackground()).getColor());
+        assertEquals("and the window is left clear", android.graphics.Color.TRANSPARENT,
                 activity.getWindow().getStatusBarColor());
         SlothTheme.select(activity, 0);
     }

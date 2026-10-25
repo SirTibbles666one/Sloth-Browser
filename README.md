@@ -90,7 +90,7 @@ to a scratch directory so a change can be looked at before it is installed.
 
 ## State
 
-Last build: **1228**, `versionCode 1228`, signed and promoted; `/releases/latest` in the releases
+Last build: **1229**, `versionCode 1229`, signed and promoted; `/releases/latest` in the releases
 repository serves it. Trunk is the app's own 1119 build.
 
 Open, honestly:

@@ -53,6 +53,45 @@ public final class SlothShell {
     static int ACCENT = SlothTheme.accent();
     static int LINE = SlothTheme.lineAt(0x1F);
 
+    /**
+     * Draw under the system bars instead of inside them.
+     *
+     * <p>On Android 15 this is already the platform's default and the old status bar colour
+     * call is ignored, which is why the band above our panel was the system's. Asking for it
+     * explicitly makes the behaviour the same on every device we support: the page reaches the
+     * top of the screen, and the panel, the status strip and the nav bar are all ours to
+     * paint. Every position here is measured from laid-out views rather than computed from
+     * constants, so removing the decor's inset cannot double-count it.</p>
+     */
+    static void requestEdgeToEdge(Activity activity) {
+        Window window = activity == null ? null : activity.getWindow();
+        if (window == null) {
+            return;
+        }
+        try {
+            if (android.os.Build.VERSION.SDK_INT >= 30) {
+                window.setDecorFitsSystemWindows(false);
+                window.setStatusBarColor(android.graphics.Color.TRANSPARENT);
+                window.setNavigationBarColor(android.graphics.Color.TRANSPARENT);
+                if (android.os.Build.VERSION.SDK_INT >= 29) {
+                    window.setStatusBarContrastEnforced(false);
+                    window.setNavigationBarContrastEnforced(false);
+                }
+            } else {
+                View decor = window.getDecorView();
+                decor.setSystemUiVisibility(decor.getSystemUiVisibility()
+                        | View.SYSTEM_UI_FLAG_LAYOUT_STABLE
+                        | View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN
+                        | View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION);
+                window.setStatusBarColor(android.graphics.Color.TRANSPARENT);
+                window.setNavigationBarColor(android.graphics.Color.TRANSPARENT);
+            }
+            edgeToEdge = true;
+        } catch (RuntimeException e) {
+            SlothLog.error("could not ask the window to draw under the system bars");
+        }
+    }
+
     static void applyTheme() {
         BG = SlothTheme.bg();
         SURFACE = SlothTheme.surface();
@@ -91,6 +130,10 @@ public final class SlothShell {
     private static final String[] PANEL = {"panel", "panelBody"};
     private static final java.util.HashMap<String, int[]> legacyState = new java.util.HashMap<>();
     private static int appRootPadTop = -1;
+    /** The page's own bottom padding, kept so the nav bar can be cleared under it. */
+    private static int appRootPadBottom = -1;
+    /** True once the window was asked to draw under the system bars, for the harness. */
+    static boolean edgeToEdge;
     /** Height of the system status bar; the shell must not draw over it. */
     private static int statusInset;
     /** Whether the drawer is meant to be open; a stray height without this is debris. */
@@ -468,6 +511,11 @@ public final class SlothShell {
             // what went wrong in the last session is worth reading in this one
             SlothLog.attach(activity);
             applyTheme();
+        if (activity != null) {
+            // before any inset is read: the window must stop fitting content inside the bars,
+            // or every measurement below describes the old window
+            requestEdgeToEdge(activity);
+        }
             guardOff(activity);
             if (overlay == null) {
                 // nothing is attached: any loop still running belongs to a dead shell
@@ -924,6 +972,11 @@ public final class SlothShell {
             if (appRoot != null) {
                 if (appRootPadTop < 0) {
                     appRootPadTop = appRoot.getPaddingTop();
+                    // the window now runs under the nav bar, so the page has to keep its own
+                    // distance from it or the last line of every site sits under the pill
+                    appRootPadBottom = Math.max(appRoot.getPaddingBottom(), navInset(activity));
+                    appRoot.setPadding(appRoot.getPaddingLeft(), appRoot.getPaddingTop(),
+                            appRoot.getPaddingRight(), appRootPadBottom);
                 }
                 alignPageToBar(activity, 0);
                 root.post(new Runnable() {
@@ -1879,6 +1932,11 @@ public final class SlothShell {
             return true;
         }
         return false;
+    }
+
+    /** The page's bottom padding as the shell set it, for the harness. */
+    static int pagePadBottomForTest() {
+        return appRootPadBottom;
     }
 
     /** The peek seat as measured, for the harness. */
@@ -3412,25 +3470,9 @@ public final class SlothShell {
      * piece up to the top of the screen, and its icons flip to dark on the light themes.
      */
     static void tintStatusBar(Activity activity) {
-        try {
-            android.view.Window window = activity.getWindow();
-            window.setStatusBarColor(SlothTheme.bg());
-            boolean light = !SlothTheme.frosted();
-            if (android.os.Build.VERSION.SDK_INT >= 30) {
-                android.view.WindowInsetsController controller = window.getInsetsController();
-                if (controller != null) {
-                    int mask = android.view.WindowInsetsController.APPEARANCE_LIGHT_STATUS_BARS;
-                    controller.setSystemBarsAppearance(light ? mask : 0, mask);
-                }
-            } else if (android.os.Build.VERSION.SDK_INT >= 23) {
-                View decor = window.getDecorView();
-                int flags = decor.getSystemUiVisibility();
-                decor.setSystemUiVisibility(light
-                        ? (flags | View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR)
-                        : (flags & ~View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR));
-            }
-        } catch (RuntimeException ignored) {
-        }
+        // the strip is a view of ours now. Setting a window colour as well would be a second
+        // writer for the same band, and on Android 15 it is a writer the platform ignores.
+        paintStatusBar(activity);
     }
 
     private static FrameLayout.LayoutParams fadeLp(Activity activity) {
