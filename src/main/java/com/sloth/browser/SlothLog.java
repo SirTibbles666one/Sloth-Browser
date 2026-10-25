@@ -69,23 +69,35 @@ final class SlothLog {
 
     /** A fault the person needs to see: the shell could not do what was asked. */
     static void error(String what) {
-        note("ERROR " + what);
+        record("ERROR ", what, true);
     }
 
     /** Something worked around, or would have been wrong if left alone. */
     static void warn(String what) {
-        note("WARN " + what);
+        record("WARN ", what, false);
     }
 
     static void note(String what) {
+        record("", what, false);
+    }
+
+    /**
+     * Add a line, and store it only as expensively as it deserves.
+     *
+     * <p>Every note used to be a synchronous commit to storage on the main thread, and the
+     * probe and the tick can emit several a second: a disk write per line while the UI is
+     * drawing. Notes go through apply(); an error commits, because that is the line whose
+     * loss would leave a report with nothing in it.</p>
+     */
+    private static void record(String prefix, String what, boolean durable) {
         try {
-            String line = TIME.format(new Date()) + "  " + what;
+            String line = TIME.format(new Date()) + "  " + prefix + what;
             synchronized (LINES) {
                 while (LINES.size() >= KEEP) {
                     LINES.removeFirst();
                 }
                 LINES.addLast(line);
-                persistLocked();
+                persistLocked(durable);
             }
             android.util.Log.d("SlothShell", what);
         } catch (Throwable ignored) {
@@ -93,6 +105,10 @@ final class SlothLog {
     }
 
     private static void persistLocked() {
+        persistLocked(true);
+    }
+
+    private static void persistLocked(boolean durable) {
         if (store == null) {
             return;
         }
@@ -103,9 +119,13 @@ final class SlothLog {
             }
             out.append(line);
         }
-        // committed, not applied: a fault that ends the session is what this log is for,
-        // and an asynchronous write can be lost with the process that queued it
-        store.edit().putString(KEY, out.toString()).commit();
+        // a fault that ends the session is what this log is for, and an asynchronous write
+        // can be lost with the process that queued it - so errors commit, notes do not
+        if (durable) {
+            store.edit().putString(KEY, out.toString()).commit();
+        } else {
+            store.edit().putString(KEY, out.toString()).apply();
+        }
     }
 
     /**

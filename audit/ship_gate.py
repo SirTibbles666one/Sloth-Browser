@@ -60,9 +60,16 @@ def main():
         blob = b"".join(z.read(n) for n in dexs)
     missing = []
     for path in classes:
-        posix = path.as_posix()
-        rel = posix.split("/src/", 1)[-1]
-        desc = "L" + rel.replace(".java", "") + ";"
+        # the descriptor comes from the package the file declares, not from where it
+        # happens to sit: this gate used to infer it from the path, and moving the
+        # sources into a repo with a src/main/java layout made every class "missing"
+        text = path.read_text(errors="replace")
+        pkg = re.search(r"^\s*package\s+([\w.]+)\s*;", text, re.M)
+        name = path.stem
+        if pkg is None:
+            desc = "L" + name + ";"
+        else:
+            desc = "L" + pkg.group(1).replace(".", "/") + "/" + name + ";"
         if desc.encode() not in blob:
             missing.append(path.name)
     print(f"source classes in dex: {len(classes) - len(missing)}/{len(classes)}")

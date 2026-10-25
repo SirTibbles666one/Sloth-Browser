@@ -136,6 +136,8 @@ public final class SlothShell {
     /** The peek: close, the open tabs, a new tab - the whole of a half-open sheet. */
     private static HorizontalScrollView peekScroll;
     private static LinearLayout peekRow;
+    /** One drag for the strip and everything on it, so it starts wherever the finger lands. */
+    private static SlothDrag stripDrag;
     private static View barWrapView;
     private static View fwdGlyph;
     private static TextView clearTag;
@@ -424,6 +426,7 @@ public final class SlothShell {
         // the peek and the painted scene came later; the release has to keep up with them
         peekScroll = null;
         peekRow = null;
+        stripDrag = null;
         peekShowing = false;
         lastPeekSignature = "";
         backdropView = null;
@@ -569,6 +572,12 @@ public final class SlothShell {
 
                 @Override
                 public void onRelease(float velocity) {
+                    // only the view that claimed the drag may end it. A scrollable child
+                    // reporting its own release used to settle a sheet nobody had touched,
+                    // which is one way the drawer appeared to shut itself
+                    if (!dragging) {
+                        return;
+                    }
                     dragging = false;
                     finishDrag(activity, velocity);
                 }
@@ -659,8 +668,12 @@ public final class SlothShell {
             peekScroll.addView(peekRow, new FrameLayout.LayoutParams(
                     ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT));
             peekScroll.setVisibility(View.GONE);
-            // sideways walks the tabs; up and down belongs to the sheet
-            peekScroll.setOnTouchListener(new SlothDrag(shellDrag));
+            // sideways walks the tabs; up and down belongs to the sheet. The listener goes
+            // on the scroll container AND every square inside it: a touch that lands on a
+            // tab is delivered to the tab, and the container's own listener never saw the
+            // gesture - which is why a vertical drag only worked on the gaps between tabs.
+            stripDrag = new SlothDrag(shellDrag);
+            peekScroll.setOnTouchListener(stripDrag);
             holder.addView(peekScroll, new LinearLayout.LayoutParams(
                     ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
 
@@ -1771,13 +1784,8 @@ public final class SlothShell {
             return true;
         }
         if (settingsOpen) {
-            // the browser's own panel is up, lent by us; back must put the page back
-            releasePanel(activity);
-            SlothLog.note("back closed the browser's panel");
-            return true;
-        }
-        if (settingsOpen) {
-            // the browser's own panel is up, lent by us; back must put the page back
+            // the browser's own panel is up, lent by us; back must put the page back.
+            // (This block was written twice; the second copy could never run.)
             releasePanel(activity);
             SlothLog.note("back closed the browser's panel");
             return true;
@@ -2403,6 +2411,8 @@ public final class SlothShell {
     }
 
     private static void setDrawerHeight(Activity activity, int h) {
+        int was = drawer == null || drawer.getLayoutParams() == null
+                ? 0 : drawer.getLayoutParams().height;
         if (h == 0) {
             // the pickers live in the drawer; a shut drawer must not leave them showing
             if (paletteSheet != null && paletteSheet.getVisibility() == View.VISIBLE) {
@@ -2411,7 +2421,11 @@ public final class SlothShell {
             if (widgetSheet != null && widgetSheet.getVisibility() == View.VISIBLE) {
                 widgetSheet.setVisibility(View.GONE);
             }
-            checkLayers("closed the drawer");
+            // only on the way shut: this walks the tree and reads the log, and a drag held
+            // at zero called it on every frame
+            if (was > 0) {
+                checkLayers("closed the drawer");
+            }
         }
         if (h > 0 && settingsOpen) {
             // pulling the drawer down means the errand moved on: the loan is over
@@ -2435,7 +2449,6 @@ public final class SlothShell {
         if (barWrapView == null) {
             return;
         }
-        int was = drawer.getLayoutParams().height;
         ViewGroup.LayoutParams lp = drawer.getLayoutParams();
         lp.height = h;
         drawer.setLayoutParams(lp);
@@ -2738,6 +2751,23 @@ public final class SlothShell {
             }
         });
         peekRow.addView(plus);
+        // the squares are added after this build, so the drag is attached last: the strip
+        // has to react to a finger that lands on a tab, not only on the gaps between them
+        attachStripDrag(peekRow);
+    }
+
+    /** Put the strip's drag on a view and everything under it. */
+    private static void attachStripDrag(View view) {
+        if (view == null || stripDrag == null) {
+            return;
+        }
+        view.setOnTouchListener(stripDrag);
+        if (view instanceof ViewGroup) {
+            ViewGroup group = (ViewGroup) view;
+            for (int i = 0; i < group.getChildCount(); i++) {
+                attachStripDrag(group.getChildAt(i));
+            }
+        }
     }
 
     /**
@@ -3178,8 +3208,17 @@ public final class SlothShell {
     private static int statusBarHeight(Activity activity) {
         try {
             android.view.WindowInsets insets = activity.getWindow().getDecorView().getRootWindowInsets();
-            if (insets != null && insets.getSystemWindowInsetTop() > 0) {
-                return insets.getSystemWindowInsetTop();
+            if (insets != null) {
+                // the typed inset is the one that stays correct under Android 15's
+                // edge-to-edge window; the legacy getter is kept for the older API only
+                if (android.os.Build.VERSION.SDK_INT >= 30) {
+                    int top = insets.getInsets(android.view.WindowInsets.Type.statusBars()).top;
+                    if (top > 0) {
+                        return top;
+                    }
+                } else if (insets.getSystemWindowInsetTop() > 0) {
+                    return insets.getSystemWindowInsetTop();
+                }
             }
         } catch (Throwable ignored) {
         }
@@ -3336,16 +3375,6 @@ public final class SlothShell {
                 }
             }
 
-            // nothing asked for an open drawer: one standing open was left by a gesture,
-            // an animation or a rebuild, and it covers the page until someone closes it
-            if (!dragging && !animating && !openIntent && drawer != null
-                    && drawer.getLayoutParams() != null
-                    && drawer.getLayoutParams().height > 0
-                    && settingsPage != null && settingsPage.getVisibility() != View.VISIBLE) {
-                SlothLog.note("closed a drawer nothing asked for");
-                setDrawerHeight(activity, 0);
-            }
-
             if (board != null) {
                 board.mirror(activity);
             }
@@ -3395,7 +3424,11 @@ public final class SlothShell {
             }
             dimWhenUnusable(activity, "btnBack", backGlyph);
             dimWhenUnusable(activity, "btnFwd", fwdGlyph);
-        } catch (Throwable ignored) {
+        } catch (Throwable t) {
+            // this method touches the app's own view tree, which changes under us. Swallowed
+            // silently it hid every failure it ever had; a line in the log costs nothing
+            SlothLog.warn("refresh failed: " + t.getClass().getSimpleName()
+                    + (t.getMessage() == null ? "" : " " + t.getMessage()));
         }
     }
 

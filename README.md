@@ -85,12 +85,13 @@ to a scratch directory so a change can be looked at before it is installed.
 
 ## State
 
-Last build: **1222**, `versionCode 1222`, signed and promoted; `/releases/latest` in the releases
+Last build: **1223**, `versionCode 1223`, signed and promoted; `/releases/latest` in the releases
 repository serves it. Trunk is the app's own 1119 build.
 
 Open, honestly:
 
 - No on-device verification of the last several builds — the phone is the only renderer.
+- The audit of 1223 found and fixed nine faults; `docs/AUDIT.md` lists them with what is still open.
 - Bookmarks/History/Downloads depend on the app drawing into a lent panel; the count decides.
 - No loading progress or real Stop: no progress API is reachable from the shell.
 - `SlothShell` is still one large static class; the split is not done.

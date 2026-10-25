@@ -20,7 +20,6 @@ final class SlothDrag implements View.OnTouchListener {
     private float downX, downY, lastY;
     private long lastT;
     private boolean dragging;
-    private boolean moved;
 
     SlothDrag(SlothBar.Listener listener) {
         this.listener = listener;
@@ -42,7 +41,6 @@ final class SlothDrag implements View.OnTouchListener {
                 lastY = downY;
                 lastT = event.getEventTime();
                 dragging = false;
-                moved = false;
                 return false;
             }
             case MotionEvent.ACTION_MOVE: {
@@ -54,7 +52,6 @@ final class SlothDrag implements View.OnTouchListener {
                         return false;
                     }
                     dragging = true;
-                    moved = true;
                     if (view.getParent() != null) {
                         // the scroller must stop treating this as its own flick
                         view.getParent().requestDisallowInterceptTouchEvent(true);
@@ -64,6 +61,10 @@ final class SlothDrag implements View.OnTouchListener {
                         // before the claim is simply not carried
                         listener.onDragStart(downY, 0f);
                     }
+                    // measure speed from the claim, not from where the finger landed
+                    lastY = event.getY();
+                    lastT = event.getEventTime();
+                    return true;
                 }
                 float step = event.getY() - lastY;
                 lastY = event.getY();
@@ -76,8 +77,11 @@ final class SlothDrag implements View.OnTouchListener {
             case MotionEvent.ACTION_UP:
             case MotionEvent.ACTION_CANCEL: {
                 if (dragging) {
+                    // a cancelled gesture has no speed: the system took the finger away, so
+                    // the sheet settles rather than flying wherever the last move pointed
+                    boolean cancelled = event.getActionMasked() == MotionEvent.ACTION_CANCEL;
                     long dt = Math.max(1, event.getEventTime() - lastT);
-                    float velocity = (event.getY() - lastY) / dt;
+                    float velocity = cancelled ? 0f : (event.getY() - lastY) / dt;
                     dragging = false;
                     if (listener != null) {
                         listener.onRelease(velocity);

@@ -218,17 +218,23 @@ final class SlothSettings {
                 new View.OnClickListener() {
                     @Override
                     public void onClick(View v) {
-                        current[0] = !current[0];
-                        boolean ok = SlothPrefs.write(activity, field, current[0]);
+                        boolean wanted = !current[0];
+                        boolean ok = SlothPrefs.write(activity, field, wanted);
+                        if (!ok) {
+                            // the browser refused the write. A switch that stays flipped
+                            // claims a setting is on when nothing was saved, so it goes
+                            // back where it was and the row says why
+                            SlothLog.error("could not save " + field);
+                            paintSwitch(activity, track, current[0]);
+                            return;
+                        }
+                        current[0] = wanted;
                         paintSwitch(activity, track, current[0]);
                         v.setContentDescription(
                                 current[0] ? v.getContentDescription().toString()
                                         .replace(", off", ", on")
                                         : v.getContentDescription().toString()
                                         .replace(", on", ", off"));
-                        if (!ok) {
-                            SlothLog.note("could not save " + field);
-                        }
                     }
                 });
         if (row != null) {

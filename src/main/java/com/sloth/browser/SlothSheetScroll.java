@@ -59,6 +59,10 @@ public class SlothSheetScroll extends ScrollView {
                     // the scroller knows where the finger landed and where it is now
                     listener.onDragStart(e.getY(), dy);
                     downY = e.getY();
+                    // the claim point is also where the speed is measured from, or the
+                    // first move after it reads as a jump from wherever the finger started
+                    lastY = e.getY();
+                    lastT = e.getEventTime();
                     return true;
                 }
                 return super.onInterceptTouchEvent(e);
@@ -111,12 +115,19 @@ public class SlothSheetScroll extends ScrollView {
                 return super.onTouchEvent(e);
             }
             case MotionEvent.ACTION_UP:
-                listener.onRelease(velocity(e.getY(), e.getEventTime()));
+                // only a drag this view owned ends a drag. A scroll is not a flick of the
+                // sheet: reporting one closed the drawer whenever the list was scrolled
+                // upwards, which read as the drawer shutting itself for no reason
+                if (dragging) {
+                    listener.onRelease(velocity(e.getY(), e.getEventTime()));
+                }
                 dragging = false;
                 holdTheGesture(false);
                 return true;
             case MotionEvent.ACTION_CANCEL:
-                listener.onRelease(0f);
+                if (dragging) {
+                    listener.onRelease(0f);
+                }
                 dragging = false;
                 holdTheGesture(false);
                 return true;
