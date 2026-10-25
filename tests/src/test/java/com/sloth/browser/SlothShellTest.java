@@ -242,6 +242,206 @@ public class SlothShellTest {
         return null;
     }
 
+    /** A scroll of the list is not a flick of the sheet. */
+    @Test
+    public void scrollingTheListDoesNotReleaseTheSheet() {
+        TestActivity activity = build();
+        final int[] releases = {0};
+        final int[] claimed = {0};
+        SlothSheetScroll list = new SlothSheetScroll(activity);
+        list.setListener(new SlothBar.Listener() {
+            @Override
+            public void onDragStart(float y, float carry) {
+                claimed[0]++;
+            }
+
+            @Override
+            public void onDrag(float dy) {
+            }
+
+            @Override
+            public void onRelease(float velocity) {
+                releases[0]++;
+            }
+
+            @Override
+            public void onTap() {
+            }
+
+            @Override
+            public boolean onSwipe(float dx) {
+                return false;
+            }
+        });
+
+        // a scroll that never goes near the top: down, then a fast finger lift
+        long t = SystemClock.uptimeMillis();
+        list.onTouchEvent(MotionEvent.obtain(t, t, MotionEvent.ACTION_DOWN, 200f, 400f, 0));
+        list.onTouchEvent(MotionEvent.obtain(t, t + 20, MotionEvent.ACTION_MOVE, 200f, 430f, 0));
+        list.onTouchEvent(MotionEvent.obtain(t, t + 40, MotionEvent.ACTION_MOVE, 200f, 470f, 0));
+        list.onTouchEvent(MotionEvent.obtain(t, t + 60, MotionEvent.ACTION_UP, 200f, 600f, 0));
+
+        assertEquals("a scroll is not a drag of the drawer", 0, claimed[0]);
+        assertEquals("and it must not report a release either: that settled the sheet "
+                + "from a finger that never touched it", 0, releases[0]);
+    }
+
+    /** The strip's drag has to work from a tab square, not only from the gaps. */
+    @Test
+    public void theStripDragCoversEverySquare() throws Exception {
+        TestActivity activity = build();
+        SlothShell.own(activity);
+        addTabs(activity, "one", "two");
+        // open it to the strip
+        driveHeight(activity, peekHeight(activity));
+        settle();
+
+        View strip = findByViewTag(overlayOf(activity), "peek-strip");
+        assertNotNull("the peek strip", strip);
+        ViewGroup row = (ViewGroup) ((ViewGroup) strip).getChildAt(0);
+        assertTrue("the strip has squares in it", row.getChildCount() >= 2);
+
+        int before = drawerOf(activity).getLayoutParams().height;
+        // a finger that lands on the first square and pulls up: the sheet must follow.
+        // This is the case that used to do nothing at all, because the touch was delivered
+        // to the square and the scroll container's listener never saw it
+        View square = row.getChildAt(0);
+        long t = SystemClock.uptimeMillis();
+        square.dispatchTouchEvent(MotionEvent.obtain(t, t, MotionEvent.ACTION_DOWN, 30f, 30f, 0));
+        square.dispatchTouchEvent(MotionEvent.obtain(t, t + 20, MotionEvent.ACTION_MOVE, 30f, 10f, 0));
+        square.dispatchTouchEvent(MotionEvent.obtain(t, t + 40, MotionEvent.ACTION_MOVE, 30f, -10f, 0));
+        settle();
+        int after = drawerOf(activity).getLayoutParams().height;
+        assertTrue("a drag that starts on a tab square must move the sheet, not ignore the "
+                + "finger: " + before + " -> " + after, after != before);
+    }
+
+    /** A drag must move the page with the compositor, not re-lay-it-out. */
+    @Test
+    public void thePageFollowsByTranslationWhileDragging() throws Exception {
+        TestActivity activity = build();
+        SlothShell.own(activity);
+        driveHeight(activity, peekHeight(activity) * 4);
+        settle();
+
+        View page = pageRoot(activity);
+        int committed = page.getPaddingTop();
+
+        View bar = findByViewTag(overlayOf(activity), "drag");
+        assertNotNull("the bar is the handle", bar);
+        long t = SystemClock.uptimeMillis();
+        bar.dispatchTouchEvent(MotionEvent.obtain(t, t, MotionEvent.ACTION_DOWN, 200f, 300f, 0));
+        for (int i = 1; i <= 12; i++) {
+            bar.dispatchTouchEvent(MotionEvent.obtain(t, t + i * 16L,
+                    MotionEvent.ACTION_MOVE, 200f, 300f - i * 12f, 0));
+        }
+        settle();
+
+        assertEquals("while dragging, the page root's padding must not be rewritten: a "
+                        + "padding write is a layout pass that resizes the engine surface",
+                committed, page.getPaddingTop());
+        assertNotEquals("the page follows the sheet by translation instead", 0f,
+                page.getTranslationY(), 0.5);
+
+        // on release the real offset is committed once and the translation cleared
+        bar.dispatchTouchEvent(MotionEvent.obtain(t, t + 13 * 16L,
+                MotionEvent.ACTION_UP, 200f, 300f - 12 * 12f, 0));
+        settle();
+        assertEquals("the translation is cleared at rest", 0f, page.getTranslationY(), 0.5);
+    }
+
+    /** The app's own content view, which the shell offsets. */
+    private View pageRoot(Activity activity) {
+        ViewGroup content = activity.findViewById(android.R.id.content);
+        return content.getChildAt(0);
+    }
+
+    /** Coalescing must not put the sheet behind the finger. */
+    @Test
+    public void theSheetStillFollowsTheFingerExactly() throws Exception {
+        TestActivity activity = build();
+        SlothShell.own(activity);
+        // open it tall enough that a drag up is a real drag, not a sheet already at zero
+        driveHeight(activity, peekHeight(activity) * 4);
+        settle();
+        int start = drawerOf(activity).getLayoutParams().height;
+        assertTrue("the sheet is open: " + start, start > 200);
+
+        View bar = findByViewTag(overlayOf(activity), "drag");
+        long t = SystemClock.uptimeMillis();
+        bar.dispatchTouchEvent(MotionEvent.obtain(t, t, MotionEvent.ACTION_DOWN, 200f, 300f, 0));
+        bar.dispatchTouchEvent(MotionEvent.obtain(t, t + 16, MotionEvent.ACTION_MOVE, 200f, 290f, 0));
+        bar.dispatchTouchEvent(MotionEvent.obtain(t, t + 32, MotionEvent.ACTION_MOVE, 200f, 240f, 0));
+        settle();
+
+        int now = drawerOf(activity).getLayoutParams().height;
+        // the touch coordinates are pixels and so is the drawer height: 60px of finger
+        // must be 60px of sheet, not 60px minus a frame or scaled by density
+        assertEquals("after 60px up the sheet sits 60px shorter: " + start + " -> " + now,
+                60, start - now, 4.0);
+    }
+
+    /** The app's panel, left visible with nothing in it, must be put away on a timer. */
+    @Test
+    public void aLeftoverPanelIsSweptAway() {
+        TestActivity activity = build();
+        SlothShell.own(activity);
+        activity.binding.panel.setVisibility(View.VISIBLE);
+        activity.binding.panelBody.setVisibility(View.VISIBLE);
+
+        SlothShell.sweepAppLeftovers(activity);
+
+        assertEquals("the app's panel is not this shell's to leave open",
+                View.GONE, activity.binding.panel.getVisibility());
+        assertEquals(View.GONE, activity.binding.panelBody.getVisibility());
+    }
+
+    /** Collapsing the panel alone leaves the card that held it: an empty bordered box. */
+    @Test
+    public void theBoxAroundACollapsedPanelGoesWithIt() {
+        TestActivity activity = build();
+        SlothShell.own(activity);
+        ViewGroup content = activity.findViewById(android.R.id.content);
+        ViewGroup appRoot = (ViewGroup) content.getChildAt(0);
+        FrameLayout card = new FrameLayout(activity);
+        FrameLayout inner = new FrameLayout(activity);
+        card.addView(inner);
+        appRoot.addView(card);
+
+        // the order the shell uses: collapse the panel, then the box that held it
+        inner.setVisibility(View.GONE);
+        SlothShell.collapseLonelyAncestors(inner);
+
+        assertEquals("and the box that existed only to hold it", View.GONE, card.getVisibility());
+    }
+
+    /** The next "it still feels wrong" should arrive with numbers, not adjectives. */
+    @Test
+    public void aDragLeavesATraceInDiagnostics() throws Exception {
+        TestActivity activity = build();
+        SlothShell.own(activity);
+        driveHeight(activity, peekHeight(activity) * 4);
+        settle();
+
+        View bar = findByViewTag(overlayOf(activity), "drag");
+        long t = SystemClock.uptimeMillis();
+        bar.dispatchTouchEvent(MotionEvent.obtain(t, t, MotionEvent.ACTION_DOWN, 200f, 300f, 0));
+        for (int i = 1; i <= 6; i++) {
+            bar.dispatchTouchEvent(MotionEvent.obtain(t, t + i * 16L,
+                    MotionEvent.ACTION_MOVE, 200f, 300f - i * 15f, 0));
+        }
+        bar.dispatchTouchEvent(MotionEvent.obtain(t, t + 7 * 16L,
+                MotionEvent.ACTION_UP, 200f, 300f - 90f, 0));
+        settle();
+
+        String trace = SlothShell.dragTraceForTest();
+        assertFalse("a drag was not recorded: " + trace, trace.startsWith("-1"));
+        assertTrue("the trace names the move count: " + trace, trace.contains("moves="));
+        assertTrue("and the seat it settled on: " + trace, trace.contains("seat="));
+        String report = SlothShell.diagLines(activity);
+        assertTrue("diagnostics prints it: " + report, report.contains("last drag:"));
+    }
+
     private View findByViewTag(View v, String tag) {
         if (tag.equals(v.getTag())) {
             return v;
@@ -470,11 +670,11 @@ public class SlothShellTest {
         SlothShell.own(activity);
         View drawer = drawerOf(activity);
 
-        assertNotNull("wordmark", findChip(drawer, "Sloth"));
-        assertNotNull("dashboard label", findChip(drawer, "DASHBOARD"));
-        assertNotNull("edit affordance", findChip(drawer, "Edit widgets"));
-        assertNotNull("tabs header", findChip(drawer, "Tabs"));
-        assertNotNull("and its add control", findTagged(drawer, "New tab"));
+        // the bar above is the dashboard's header, so the panel does not repeat a masthead
+        assertNull("no second masthead", findChip(drawer, "DASHBOARD"));
+        assertNull("and no wordmark of its own", findChip(drawer, "Sloth"));
+        assertNotNull("the tabs are the first thing in it", findChip(drawer, "Tabs"));
+        assertNotNull("with their add control", findTagged(drawer, "New tab"));
         assertNotNull("widget section", findChip(drawer, "WIDGETS"));
         assertNotNull("clock widget", findChip(drawer, "CLOCK"));
         assertNotNull("notes widget", findChip(drawer, "NOTES"));
@@ -1550,7 +1750,9 @@ public class SlothShellTest {
 
         View column = findByViewTag(surface, "column");
         assertNotNull("the bar and the drawer share one column", column);
-        assertEquals("bar, hairline, drawer", 3, ((ViewGroup) column).getChildCount());
+        // bar, then drawer: the hairline between them is gone, because a rule between two
+        // halves is the cheapest way to draw them as two
+        assertEquals("bar and drawer, nothing between", 2, ((ViewGroup) column).getChildCount());
         assertTrue("the drawer is a child of the panel",
                 drawerOf(activity).getParent() == column);
         assertTrue("the bar sits inside the panel's drag wrapper",
@@ -1732,9 +1934,11 @@ public class SlothShellTest {
 
         assertEquals("the drawer is open", true,
                 drawerOf(activity).getLayoutParams().height > px(150));
-        float faded = findTagged(bar, "New tab").getAlpha();
-        assertTrue("the bar's chrome steps back while the dashboard is up: " + faded,
-                faded < collapsed - 0.2f);
+        // the bar is the dashboard's header now: it does not step back, because stepping
+        // back said "something else is in front of me"
+        float kept = findTagged(bar, "New tab").getAlpha();
+        assertEquals("the bar stays at full weight while the dashboard is up",
+                collapsed, kept, 0.01f);
     }
 
     @Test
@@ -1828,18 +2032,20 @@ public class SlothShellTest {
         settle();
         int open = drawer.getLayoutParams().height;
 
-        assertNotNull(findChip(drawer, "DASHBOARD"));
-        View headerWrap = findByViewTag(drawer, "head-drag");
-        assertNotNull("the header is a drag surface", headerWrap);
+        assertNull("there is no second header to drag", findByViewTag(drawer, "head-drag"));
 
+        // the content above its own top is still a drag of the sheet: the list hands an
+        // upward pull to the drawer, which is how a finger on the dashboard closes it
+        View list = findByViewTag(drawer, "list");
+        assertNotNull("the dashboard has a scroller", list);
         long t2 = SystemClock.uptimeMillis();
-        // drag the head upwards: it shrinks the drawer, same as dragging the bar up
-        headerWrap.dispatchTouchEvent(MotionEvent.obtain(t2, t2, MotionEvent.ACTION_DOWN, 200f, 400f, 0));
-        headerWrap.dispatchTouchEvent(MotionEvent.obtain(t2, t2 + 30, MotionEvent.ACTION_MOVE, 200f, 300f, 0));
-        headerWrap.dispatchTouchEvent(MotionEvent.obtain(t2, t2 + 60, MotionEvent.ACTION_UP, 200f, 250f, 0));
+        list.dispatchTouchEvent(MotionEvent.obtain(t2, t2, MotionEvent.ACTION_DOWN, 200f, 100f, 0));
+        list.dispatchTouchEvent(MotionEvent.obtain(t2, t2 + 30, MotionEvent.ACTION_MOVE, 200f, 20f, 0));
+        list.dispatchTouchEvent(MotionEvent.obtain(t2, t2 + 60, MotionEvent.ACTION_MOVE, 200f, -60f, 0));
+        list.dispatchTouchEvent(MotionEvent.obtain(t2, t2 + 90, MotionEvent.ACTION_UP, 200f, -140f, 0));
         settle();
 
-        assertNotEquals("the header resizes the drawer like the bar does",
+        assertNotEquals("the dashboard's own content drags the sheet like the bar does",
                 open, drawer.getLayoutParams().height);
     }
 
@@ -2315,13 +2521,12 @@ public class SlothShellTest {
         SlothShell.own(activity);
         settle();
         View drawer = drawerOf(activity);
-        View fade = findByViewTag(drawer, "fade");
-        assertNotNull("the cut edge has a fade", fade);
-        assertEquals("and it is hidden while the drawer is closed", View.GONE, fade.getVisibility());
+        assertNull("there is no fade band: the panel is one surface, not a cut one",
+                findByViewTag(drawer, "fade"));
 
         driveHeightSafe2(activity, 900); // between resting sizes
-        assertEquals("but appears when the drawer is mid-drag", View.VISIBLE,
-                findByViewTag(drawerOf(activity), "fade").getVisibility());
+        assertNull("and still none mid-drag",
+                findByViewTag(drawerOf(activity), "fade"));
     }
 
     private void driveHeightSafe2(Activity activity, int height) {
@@ -3873,18 +4078,17 @@ public class SlothShellTest {
         TestActivity activity = build();
         SlothShell.own(activity);
         settle();
-        SlothEdge seam = (SlothEdge) findByViewTag(drawerOf(activity), "seam");
-        assertNotNull("the sheet has a seam", seam);
-        assertEquals("shut, it is not open at all", 0f, seam.open(), 0.01f);
+        // the hinge line is gone: the seam is the surface itself, and one shape with one
+        // fill needs no drawn mark to explain where the bar ends and the dashboard begins
+        assertNull("no hinge line inside the sheet", findByViewTag(drawerOf(activity), "seam"));
+        View surface = findByViewTag(overlayOf(activity), "surface");
+        assertNotNull("the surface holds the fill", surface.getBackground());
 
         driveHeight(activity, peekHeight(activity));
         settle();
-        float peek = seam.open();
-        driveHeight(activity, peekHeight(activity) * 4);
-        settle();
-        assertTrue("and it opens with the sheet: " + peek + " then " + seam.open(),
-                seam.open() > peek);
-        assertTrue("never past fully open", seam.open() <= 1f);
+        assertNotNull("still one fill open", surface.getBackground());
+        assertEquals("the bar draws no fill of its own, open or shut", null,
+                findByViewTag(overlayOf(activity), "bar").getBackground());
     }
 
     @Test
@@ -3899,11 +4103,11 @@ public class SlothShellTest {
 
         driveHeight(activity, peekHeight(activity));
         settle();
-        assertTrue("open, it steps back with the rest of the bar: " + pill.getAlpha(),
-                pill.getAlpha() < 0.9f);
+        assertEquals("open, the field is still part of the header and still readable: "
+                + pill.getAlpha(), 1f, pill.getAlpha(), 0.01f);
         driveHeight(activity, 0);
         settle();
-        assertEquals("and comes back when the drawer shuts", 1f, pill.getAlpha(), 0.01f);
+        assertEquals("and it stays that way shut", 1f, pill.getAlpha(), 0.01f);
     }
 
     @Test
@@ -4070,28 +4274,37 @@ public class SlothShellTest {
         TestActivity activity = build();
         SlothShell.own(activity);
         settle();
-        assertNotNull("with no page it says what it is",
-                findText(overlayOf(activity), "DASHBOARD"));
-
         ((android.widget.EditText) activity.binding.urlBar).setText("https://allrecipes.com/recipe/1");
         org.robolectric.shadows.ShadowLooper.idleMainLooper(900,
                 java.util.concurrent.TimeUnit.MILLISECONDS);
         settle();
 
-        assertNotNull("with a page it names the site: " + dumpText(overlayOf(activity)),
-                findText(overlayOf(activity), "ALLRECIPES.COM"));
+        String shown = dumpText(overlayOf(activity));
+        assertTrue("the panel's own line names the page: " + shown,
+                shown.contains("allrecipes.com"));
     }
 
     @Test
-    public void theDashboardClosesWithADrawnCross() {
+    public void theDashboardClosesWithADrawnCross() throws Exception {
         TestActivity activity = build();
         SlothShell.own(activity);
         settle();
-        View close = findTagged(overlayOf(activity), "Close the dashboard");
-        assertNotNull("the header has a close control", close);
+        // the way out is the strip's close square and a tap on the header; a second close
+        // button inside the panel was part of the "two surfaces" furniture
+        assertNull("no second close control in the panel",
+                findTagged(overlayOf(activity), "Close the dashboard"));
+
+        driveHeight(activity, peekHeight(activity));
+        settle();
+        View strip = findByViewTag(overlayOf(activity), "peek-strip");
+        assertNotNull("the strip", strip);
         java.util.List<View> drawn = new java.util.ArrayList<>();
-        collectKind((ViewGroup) close, SlothIcons.class, drawn);
-        assertEquals("and the cross inside it is drawn, like the bar's", 1, drawn.size());
+        collectKind((ViewGroup) strip, SlothIcons.class, drawn);
+        boolean hasCross = false;
+        for (View view : drawn) {
+            hasCross |= ((SlothIcons) view).kind() == SlothIcons.Kind.CLOSE;
+        }
+        assertTrue("the strip closes the drawer with a drawn cross", hasCross);
     }
 
     /* --------------------------------------------------------------- helpers */

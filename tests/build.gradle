@@ -17,8 +17,8 @@ android {
 
     sourceSets {
         main {
-            java.srcDirs = ['/opt/data/cache/scratch/slothbrowser/patch1120/src',
-                            '/opt/data/cache/scratch/slothbrowser/stubs']
+            // relative to this directory, so the harness runs from a clone and in CI
+            java.srcDirs = ['../src/main/java', '../src/patches', '../stubs']
         }
     }
 

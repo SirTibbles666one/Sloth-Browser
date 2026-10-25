@@ -1,0 +1,76 @@
+name: gates
+
+# The three gates this project ships behind: the reflective-name audit, the shell
+# harness, and the ship gate. The ship gate needs a built APK and the base APK, which
+# is not in this repository, so it runs where a build runs. These two run on every push.
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  harness:
+    name: shell harness
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Platform and build tools
+        run: sdkmanager --install "platforms;android-36" "build-tools;36.0.0" > /dev/null
+
+      - name: Gradle cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: gradle-${{ runner.os }}-${{ hashFiles('tests/**/*.gradle', 'tests/gradle/wrapper/gradle-wrapper.properties') }}
+          restore-keys: gradle-${{ runner.os }}-
+
+      # Robolectric downloads its android-all jars on first use; keep them between runs.
+      - name: Robolectric cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.m2
+          key: robolectric-${{ runner.os }}-${{ hashFiles('tests/build.gradle') }}
+          restore-keys: robolectric-${{ runner.os }}-
+
+      - name: Harness
+        working-directory: tests
+        run: ./gradlew testDebugUnitTest --no-daemon --stacktrace
+
+      - name: Report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: harness-report
+          path: tests/build/reports/tests/testDebugUnitTest
+          if-no-files-found: ignore
+
+  names:
+    name: reflective names
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      # Needs the base APK, which is the app's own build and is not redistributable, so
+      # this runs only where BASE_APK is provided. It is skipped rather than faked.
+      - name: shell_refs
+        if: ${{ vars.BASE_APK_URL != '' }}
+        run: |
+          curl -sSL -o base.apk "${{ vars.BASE_APK_URL }}"
+          python3 audit/shell_refs.py base.apk src
