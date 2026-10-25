@@ -64,6 +64,11 @@ Written down because each one cost a shipped build:
   up into a row.
 - **The strip has two thresholds.** One threshold meant a slow drag flipped between strip and
   dashboard every few pixels, which read as the drawer fighting the finger.
+- **A drag translates the page, it does not relayout it.** Padding the page root on every move
+  resized the engine surface on every move; translation is a compositor shift, and the real
+  offset is committed once on release.
+- **Moves are coalesced, never dropped.** The newest sample is applied once per loop turn: two
+  moves for one frame must not become two layout passes, and must not become lag either.
 - **A drag takes the travel it spent claiming the gesture**, or the sheet lags the thumb by the
   touch slop and then lurches.
 - **Nothing is claimed in a release note without a test.** One build said the sheet cast a shadow
@@ -85,7 +90,7 @@ to a scratch directory so a change can be looked at before it is installed.
 
 ## State
 
-Last build: **1223**, `versionCode 1223`, signed and promoted; `/releases/latest` in the releases
+Last build: **1224**, `versionCode 1224`, signed and promoted; `/releases/latest` in the releases
 repository serves it. Trunk is the app's own 1119 build.
 
 Open, honestly:

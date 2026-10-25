@@ -145,6 +145,16 @@ public final class SlothShell {
     private static float downY;
     private static float startH;
     private static boolean dragging;
+    /** The union's own state, so a drag does not re-allocate its backgrounds per frame. */
+    private static boolean unionOpen;
+    /** Whether the board is showing its compact form, for the same reason. */
+    private static boolean boardCompact;
+    /** A drag collects moves and applies the latest one once per main-loop turn. */
+    private static int dragPending = Integer.MIN_VALUE;
+    private static boolean dragPosted;
+    /** Counters for the diagnostics line: how much work a drag actually did. */
+    private static int dragWrites;
+    private static int pageRelayouts;
 
     /**
      * Which shell an animation belongs to.
@@ -420,6 +430,10 @@ public final class SlothShell {
         expandedPx = 0;
         measuredContentH = 0;
         dragging = false;
+        unionOpen = false;
+        boardCompact = false;
+        dragPending = Integer.MIN_VALUE;
+        dragPosted = false;
         downY = 0;
         startH = 0;
         chromeFade = 1f;
@@ -561,8 +575,25 @@ public final class SlothShell {
                     if (drawer == null) {
                         return;
                     }
-                    setDrawerHeight(activity, (int) Math.max(0,
-                            (int) Math.max(0, Math.min(startH + dy, fullHeight(activity)))));
+                    // a digitiser can deliver two moves before a frame is drawn. Keep the
+                    // newest and apply it once per loop turn: the sheet still sits under the
+                    // finger, and the tree is measured once instead of twice
+                    dragPending = (int) Math.max(0,
+                            Math.min(startH + dy, fullHeight(activity)));
+                    if (!dragPosted) {
+                        dragPosted = true;
+                        MAIN.post(new Runnable() {
+                            @Override
+                            public void run() {
+                                dragPosted = false;
+                                if (dragging && dragPending != Integer.MIN_VALUE) {
+                                    int h = dragPending;
+                                    dragPending = Integer.MIN_VALUE;
+                                    setDrawerHeight(activity, h);
+                                }
+                            }
+                        });
+                    }
                 }
 
                 @Override
@@ -578,7 +609,18 @@ public final class SlothShell {
                     if (!dragging) {
                         return;
                     }
+                    // whatever the last turn had not applied yet, applied now, so the settle
+                    // starts from where the finger left the sheet and not one frame behind it
+                    if (dragPending != Integer.MIN_VALUE) {
+                        int h = Math.max(0, Math.min(dragPending, fullHeight(activity)));
+                        dragPending = Integer.MIN_VALUE;
+                        setDrawerHeight(activity, h);
+                    }
                     dragging = false;
+                    // the commit: the page takes its real offset once, now that the finger is up
+                    if (appRootPadTop >= 0) {
+                        alignPageToBar(activity, drawer == null ? 0 : drawer.getLayoutParams().height, false);
+                    }
                     finishDrag(activity, velocity);
                 }
 
@@ -1798,6 +1840,11 @@ public final class SlothShell {
         return false;
     }
 
+    /** How many times the page root has been re-laid-out, for the harness. */
+    static int pageRelayoutsForTest() {
+        return pageRelayouts;
+    }
+
     /** Read-only view of the loan flag, for the harness. */
     static boolean settingsOpenForTest() {
         return settingsOpen;
@@ -1852,6 +1899,11 @@ public final class SlothShell {
             out.append("state: peekShowing=").append(peekShowing)
                     .append(" settingsPage=").append(settingsOpen)
                     .append(" dockH=").append(dockH).append(" mainH=").append(mainH).append('\n');
+            // what the last drag cost. A drag that writes the sheet sixty times and
+            // re-lays-out the page sixty times is smooth only if the phone can afford it,
+            // and this is the number that says which
+            out.append("drag: ").append(dragWrites).append(" sheet writes, ")
+                    .append(pageRelayouts).append(" page relayouts, since the app started\n");
             View url = resolve(activity, "urlBar");
             out.append("url: ").append(url instanceof TextView
                     ? String.valueOf(((TextView) url).getText()) : "(no omnibox)").append('\n');
@@ -2287,6 +2339,21 @@ public final class SlothShell {
     }
 
     static void alignPageToBar(Activity activity, int drawerHeight) {
+        alignPageToBar(activity, drawerHeight, dragging || animating);
+    }
+
+    /**
+     * Put the page under the bar.
+     *
+     * <p>While the sheet is moving, the page is <em>translated</em> rather than padded: a
+     * padding write is a layout pass, and the app's page root holds the whole browser
+     * (GeckoView included), so padding it every frame resized the engine surface on every
+     * frame of every drag - the single most expensive thing a drag did. A translation is a
+     * compositor move: the surface keeps its size and follows the sheet. On release the real
+     * padding is committed once and the translation returns to zero, so rest is exact and
+     * nothing drifts.</p>
+     */
+    static void alignPageToBar(Activity activity, int drawerHeight, boolean live) {
         if (appRoot == null || surfaceView == null || appRootPadTop < 0) {
             return;
         }
@@ -2299,16 +2366,39 @@ public final class SlothShell {
             // not laid out yet: the bar's own height is the best figure available, and the
             // measured one replaces it on the next frame
             int estimate = surfaceBarPx + Math.max(0, drawerHeight);
+            if (live) {
+                float shift = estimate - appRoot.getPaddingTop();
+                if (Math.abs(appRoot.getTranslationY() - shift) > 0.5f) {
+                    appRoot.setTranslationY(shift);
+                }
+                return;
+            }
             if (appRoot.getPaddingTop() != estimate) {
                 appRoot.setPadding(appRoot.getPaddingLeft(), estimate,
                         appRoot.getPaddingRight(), appRoot.getPaddingBottom());
             }
+            if (appRoot.getTranslationY() != 0f) {
+                appRoot.setTranslationY(0f);
+            }
             return;
         }
         int top = pagePaddingFor(rootAt[1], surfaceBottom);
-        if (appRoot.getPaddingTop() != top) {
+        int committed = appRoot.getPaddingTop();
+        if (live) {
+            // the page follows the sheet without being measured
+            float shift = top - committed;
+            if (Math.abs(appRoot.getTranslationY() - shift) > 0.5f) {
+                appRoot.setTranslationY(shift);
+            }
+            return;
+        }
+        if (committed != top) {
             appRoot.setPadding(appRoot.getPaddingLeft(), top,
                     appRoot.getPaddingRight(), appRoot.getPaddingBottom());
+            pageRelayouts++;
+        }
+        if (appRoot.getTranslationY() != 0f) {
+            appRoot.setTranslationY(0f);
         }
     }
 
@@ -2372,6 +2462,12 @@ public final class SlothShell {
         if (barView == null) {
             return;
         }
+        if (open == unionOpen) {
+            // the drag calls this on every frame, and the open branch allocates four
+            // drawables: the shape only changes when the state does
+            return;
+        }
+        unionOpen = open;
         int r = dp(activity, 28);
         if (open) {
             barView.setBackground(null);
@@ -2446,6 +2542,7 @@ public final class SlothShell {
             }
         }
         applyUnion(activity, h > dp(activity, 6));
+        dragWrites++;
         if (barWrapView == null) {
             return;
         }
@@ -2526,7 +2623,10 @@ public final class SlothShell {
         }
         if (board != null) {
             boolean atPeek = h > 0 && h <= peekPx + dp(activity, 24);
-            board.setCompact(atPeek);
+            if (atPeek != boardCompact) {
+                boardCompact = atPeek;
+                board.setCompact(atPeek);
+            }
         }
         if (appRoot != null && appRootPadTop >= 0) {
             // push, not overlay: the page starts where our bar ends, and moves down by
@@ -2574,10 +2674,14 @@ public final class SlothShell {
         drawer.setVisibility(View.VISIBLE);
         drawer.setAlpha(1f);
         drawer.setTranslationY(0);
-        // a 500dp drop and a 40dp nudge cannot take the same time: a fixed 12 frames
-        // made big snaps slam and small ones crawl, and closing was a hard cut at that
+        // A 500dp drop and a 40dp nudge cannot take the same time, and a frame count
+        // cannot either: at 16 ms a frame the snap stretched whenever the phone dropped
+        // one, which read as the settle stuttering. The duration is in milliseconds and
+        // the progress is read from the clock, so a slow frame skips ahead instead of
+        // stretching the animation.
         int distance = Math.abs(target - from);
-        final int frames = Math.max(5, Math.min(18, Math.round(distance / (float) dp(activity, 9))));
+        final int duration = Math.max(120, Math.min(260,
+                Math.round(120 + distance * 0.35f)));
         final int delta = target - from;
         final boolean opening = from < dp(activity, 8);
         if (opening) {
@@ -2587,9 +2691,8 @@ public final class SlothShell {
         }
         final int mine = gen;
         animating = true;
+        final long started = android.os.SystemClock.uptimeMillis();
         MAIN.post(new Runnable() {
-            private int frame;
-
             @Override
             public void run() {
                 if (mine != gen) {
@@ -2604,18 +2707,23 @@ public final class SlothShell {
                     animating = false;
                     return;
                 }
-                frame++;
-                float t = Math.min(1f, frame / (float) frames);
+                long now = android.os.SystemClock.uptimeMillis();
+                float t = Math.min(1f, (now - started) / (float) duration);
                 float eased = 1f - (1f - t) * (1f - t);
                 setDrawerHeight(activity, from + Math.round(delta * eased));
                 if (opening) {
                     drawer.setAlpha(0.85f + 0.15f * eased);
                     drawer.setTranslationY(dp(activity, Math.round(10 * (1f - eased))));
                 }
-                if (frame < frames) {
+                if (t < 1f) {
                     MAIN.postDelayed(this, 16);
                 } else {
                     animating = false;
+                    // the settle's last word: the page takes its exact offset and the
+                    // translation that followed the sheet is cleared in one layout
+                    if (appRootPadTop >= 0) {
+                        alignPageToBar(activity, target, false);
+                    }
                 }
             }
         });
