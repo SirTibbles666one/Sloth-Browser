@@ -76,11 +76,40 @@ reads the `package` declaration now.
   `releaseShell` clears every static including the strip's drag.
 - No `TODO`, `FIXME` or `XXX` anywhere; no private method is defined without a caller.
 
+## 1226-1228: the unification, and three gesture faults
+
+The bar and the dashboard were merged into one surface in 1226, and instrumenting the drag in
+1227 found three faults in 1228 that no amount of tuning would have fixed.
+
+**A strip drag reported a delta where the shell expected a total (1228).** `SlothDrag` handed the
+shell `event.getY() - lastY` per move, and the shell positions the sheet at `startH + dy`. So every
+sample recomputed the height from the same origin: the sheet moved by one step and then stopped,
+however far the finger travelled. The fix is an accumulating `total` in `SlothDrag`; the test asserts
+the contract (three steps of 50 report 100 after the claim), not the arithmetic inside the shell.
+
+**A release could discard the last sample (1228).** Moves are coalesced to one per loop turn. A
+finger lifting between two turns left `dragPending` unapplied, and the seat was then chosen from a
+height the finger had already left. `onRelease` now applies the pending sample first.
+
+**The status bar strip belonged to the platform (1228).** Android 15 paints it edge to edge, which
+left a band of a different colour above a panel that is ours. It is now a `status-scrim` view in the
+panel's colour, with the system glyph appearance set from that colour's luminance, and it is
+repainted to the measured inset (the view is built before the insets are known). This closes the
+`setStatusBarColor` item below for our panel: the colour is drawn by us rather than requested.
+
+**The same class of bug is now checked across all three drag sources.** `SlothBar` (intercept and
+touch paths), `SlothSheetScroll` and `SlothDrag` all report travel since the claim, and all three
+reset their origin at the claim; the two that carry pre-claim travel pass it once, as `carry`.
+
+**Removed with the unification:** the bar's own capsule (a second rounded rect inside the panel),
+the drawer's fade band, the 20dp grabber band, the divider under the bar, the drawn hinge and the
+now-dead `SlothEdge`.
+
 ## Open, with reasons
 
-- **`setStatusBarColor` is a no-op on Android 15+.** The palette no longer tints the system
-  status bar on those devices. Fixing it means restructuring the window for edge-to-edge
-  (inset controller + drawing our own scrim), which is a layout change, not a bug fix.
+- **The status bar strip is painted by us, but the window is not edge-to-edge.** Our scrim covers
+  the measured inset in the panel's colour, which is what the eye sees; a true edge-to-edge window
+  (decor fit off, page drawn under the bars) would be the larger rework, and is not done.
 - **No on-device verification.** Nothing here proves how the drag *feels*, only what the events
   and arithmetic do. The phone is the only renderer.
 - **`SlothShell` is 3,500 lines with static state.** The class is reachable only through

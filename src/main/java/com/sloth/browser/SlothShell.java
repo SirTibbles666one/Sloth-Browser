@@ -129,7 +129,6 @@ public final class SlothShell {
     /** True while the sheet is showing the strip rather than the board. */
     private static boolean peekShowing;
     /** The shadow and hinge line at the sheet's top edge. */
-    private static SlothEdge edgeView;
     /** The address field, which fades with the bar rather than staying lit. */
     private static View addressPillView;
     /** What the strip was last built from, so an unchanged strip is not rebuilt. */
@@ -868,8 +867,6 @@ public final class SlothShell {
             // the drawer reads as a surface lifted over the page rather than a flat panel
             // No hinge line, no grabber band, no fade: the surface is one shape with one
             // fill, so the seam between the header and the dashboard is not drawn at all.
-            // SlothEdge is kept in the tree as a class but nothing constructs it here.
-            edgeView = null;
             if (paletteSheet != null) {
                 // added last so it covers the drawer content rather than sitting under it
                 sheet.addView(paletteSheet);
