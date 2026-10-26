@@ -1056,6 +1056,35 @@ public class SlothShellTest {
         assertEquals("backwards is bit 0 set", 1, SlothFind.BACKWARDS);
     }
 
+    /** Who owns a swipe on the content: the panel below full, the list at full. */
+    @Test
+    public void theSwipeOwnershipRule() {
+        int slop = 8;
+        // below the full seat the panel owns both directions
+        assertTrue("a pull down opens it further",
+                SlothSheetScroll.ownsTheSwipe(60f, 0f, slop, false, true, true));
+        assertTrue("a push up closes it",
+                SlothSheetScroll.ownsTheSwipe(-60f, 0f, slop, false, true, true));
+        // at the full seat the list scrolls while it can
+        assertFalse("scrolling down stays with the list",
+                SlothSheetScroll.ownsTheSwipe(60f, 0f, slop, true, true, true));
+        assertFalse("scrolling up stays with the list",
+                SlothSheetScroll.ownsTheSwipe(-60f, 0f, slop, true, true, true));
+        // ... and hands the drag back at its edges
+        // at the top there is nothing above to scroll to, so pulling down is the panel's
+        assertTrue("at the top, the panel takes the downward drag",
+                SlothSheetScroll.ownsTheSwipe(60f, 0f, slop, true, false, true));
+        // at the end there is nothing below to scroll to, so pushing up is the panel's
+        assertTrue("at the end, the panel takes the upward drag",
+                SlothSheetScroll.ownsTheSwipe(-60f, 0f, slop, true, true, false));
+        // and with content both ways, the list keeps the upward drag even at the top
+        assertFalse("at the top with content below, the list keeps the upward drag",
+                SlothSheetScroll.ownsTheSwipe(-60f, 0f, slop, true, false, true));
+        // a sideways or tiny movement is nobody's drag
+        assertFalse("sideways", SlothSheetScroll.ownsTheSwipe(60f, 60f, slop, false, true, true));
+        assertFalse("under the slop", SlothSheetScroll.ownsTheSwipe(4f, 0f, slop, false, true, true));
+    }
+
     private View findByViewTag(View v, String tag) {
         if (tag.equals(v.getTag())) {
             return v;

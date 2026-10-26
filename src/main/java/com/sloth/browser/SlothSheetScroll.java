@@ -11,12 +11,21 @@ import android.widget.ScrollView;
  * to find the bar, which is why it felt finicky: the finger was on the content, and the
  * content just scrolled.
  *
- * The rule is the one every bottom sheet uses: while the list is at the top, a drag that
- * goes up is a drag of the whole drawer. Once the list has scrolled, the drag scrolls it.
+ * The rule: while the sheet is not fully open, a vertical drag anywhere on the content
+ * moves the sheet - both directions, because opening it further is the same gesture as
+ * closing it and needing the bar to go down was the other half of "finicky". Once the
+ * sheet is at its full seat, the list scrolls, and only at a list edge does the drag
+ * return to the sheet.
  */
 public class SlothSheetScroll extends ScrollView {
 
+    /** Asked whether the sheet has reached its full seat yet. */
+    public interface AtFull {
+        boolean atFull();
+    }
+
     private SlothBar.Listener listener;
+    private AtFull atFullForTheSheet;
     private final int slop;
     private float downX, downY, lastY;
     private long lastT;
@@ -31,6 +40,33 @@ public class SlothSheetScroll extends ScrollView {
 
     public void setListener(SlothBar.Listener listener) {
         this.listener = listener;
+    }
+
+    /** Where the sheet answers whether it is open all the way. */
+    public void setAtFull(AtFull atFull) {
+        this.atFullForTheSheet = atFull;
+    }
+
+    /**
+     * Who owns a vertical swipe on the content: the panel or the list?
+     *
+     * <p>Below the full seat, the panel - in either direction, because opening it further is the
+     * same gesture as closing it. At the full seat the list scrolls, and only when it has run out
+     * in that direction does the drag come back to the panel.</p>
+     *
+     * @param canScrollUp   the list can still scroll towards its top
+     * @param canScrollDown the list can still scroll towards its end
+     */
+    static boolean ownsTheSwipe(float dy, float dx, int slop, boolean atFull,
+            boolean canScrollUp, boolean canScrollDown) {
+        float travel = Math.abs(dy);
+        if (travel <= slop || travel <= Math.abs(dx) * 1.05f) {
+            return false;
+        }
+        if (!atFull) {
+            return true;
+        }
+        return dy > 0 ? !canScrollUp : !canScrollDown;
     }
 
     @Override
@@ -52,8 +88,10 @@ public class SlothSheetScroll extends ScrollView {
                 }
                 float dy = e.getY() - downY;
                 float dx = Math.abs(e.getX() - downX);
-                // upward, deliberate, at the very top of the list
-                if (getScrollY() <= 0 && dy < -slop && Math.abs(dy) > dx * 1.05f) {
+                boolean wholeSheet = ownsTheSwipe(dy, dx, slop,
+                        atFullForTheSheet == null || atFullForTheSheet.atFull(),
+                        canScrollVertically(-1), canScrollVertically(1));
+                if (wholeSheet) {
                     dragging = true;
                     holdTheGesture(true);
                     // the scroller knows where the finger landed and where it is now

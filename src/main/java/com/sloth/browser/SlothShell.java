@@ -804,6 +804,14 @@ public final class SlothShell {
 
             SlothSheetScroll list = new SlothSheetScroll(activity);
             list.setListener(shellDrag);
+            list.setAtFull(new SlothSheetScroll.AtFull() {
+                @Override
+                public boolean atFull() {
+                    return drawer != null && drawer.getLayoutParams() != null
+                            && drawer.getLayoutParams().height
+                            >= fullHeight(activity) - dp(activity, 2);
+                }
+            });
             list.setTag("list");
             scroller = list;
             SlothLog.installCrash(activity.getApplicationContext());
