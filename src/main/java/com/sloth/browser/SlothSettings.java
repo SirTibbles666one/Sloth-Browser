@@ -184,33 +184,50 @@ final class SlothSettings {
         column.setPadding(column.getPaddingLeft(), column.getPaddingTop(),
                 column.getPaddingRight(), base + Math.max(dp(activity, 48), SlothShell.navInset(activity)));
 
-        // Back belongs to the page while it is up. A view cannot override onBackPressed,
-        // but a focused view does get the key first, so the page takes focus and answers.
+        // Back is not answered here. A focused view does get the key first, and this page used
+        // to answer it by rebuilding the whole shell - which skipped the back order the shell
+        // tests actually cover (and shut the drawer on the way). SlothBack owns the key and
+        // calls backOneLayer, so one press closes one layer.
         page.setFocusableInTouchMode(true);
-        page.setOnKeyListener(new View.OnKeyListener() {
-            @Override
-            public boolean onKey(View v, int keyCode, android.view.KeyEvent event) {
-                if (keyCode == android.view.KeyEvent.KEYCODE_BACK
-                        && event.getAction() == android.view.KeyEvent.ACTION_UP) {
-                    onClose.run();
-                    return true;
-                }
-                return false;
-            }
-        });
-        page.post(new Runnable() {
-            @Override
-            public void run() {
-                page.requestFocus();
-            }
-        });
         return page;
+    }
+
+    /**
+     * What the browser itself defaults each switch to.
+     *
+     * <p>Reading a setting can fail, and the old fallback was `false` for every row. On the five
+     * rows whose model default is `true` - JavaScript, cookies, autoplay, tracker blocking,
+     * screenshot blocking - a failed read then showed the exact opposite of the shipped state, and
+     * the row looked like something the person had turned off.</p>
+     */
+    static boolean defaultFor(String field) {
+        switch (field) {
+            case "screenGuard":
+            case "javascript":
+            case "acceptCookies":
+            case "blockAutoplay":
+            case "blockTrackers":
+                return true;
+            default:
+                return false;
+        }
+    }
+
+    /** The same for the two steppers, whose defaults are not their minimums. */
+    static int defaultNumberFor(String field) {
+        if ("textZoom".equals(field)) {
+            return 100;
+        }
+        if ("autoLockMin".equals(field)) {
+            return 5;
+        }
+        return 0;
     }
 
     /** A switch bound to one boolean of the browser's own settings. */
     private static void toggle(final Activity activity, LinearLayout column, final String field,
                                String name, String note) {
-        final boolean[] current = {SlothPrefs.flag(activity, field, false)};
+        final boolean[] current = {SlothPrefs.flag(activity, field, defaultFor(field))};
         final FrameLayout track = switchFor(activity, current[0]);
 
         LinearLayout row = rowWith(activity, column, name, note,
@@ -277,7 +294,8 @@ final class SlothSettings {
     private static void stepper(final Activity activity, LinearLayout column, final String field,
                                 String name, final int min, final int max, final int step,
                                 final String suffix, final boolean zeroIsNever) {
-        final int[] current = {SlothPrefs.number(activity, field, min)};
+        final int[] current = {SlothPrefs.number(activity, field,
+                defaultNumberFor(field) != 0 ? defaultNumberFor(field) : min)};
         final TextView value = text(activity, show(current[0], suffix, zeroIsNever), 12.5f,
                 SlothTheme.accent(), true);
         value.setGravity(Gravity.CENTER);

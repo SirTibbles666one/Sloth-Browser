@@ -646,6 +646,35 @@ public class SlothShellTest {
                 before == row.getChildAt(0));
     }
 
+    /** The settings page does not eat BACK: the shell's own order has to run. */
+    @Test
+    public void theSettingsPageLeavesBackToTheShell() throws Exception {
+        TestActivity activity = build();
+        SlothShell.own(activity);
+        settle();
+        SlothShell.openSettingsPage(activity);
+        settle();
+        View page = findByViewTag(overlayOf(activity), "settings-page");
+        assertNotNull("a settings page", page);
+        boolean consumed = page.dispatchKeyEvent(new android.view.KeyEvent(
+                android.view.KeyEvent.ACTION_UP, android.view.KeyEvent.KEYCODE_BACK));
+        assertFalse("the page answered BACK itself, skipping the shell's order", consumed);
+    }
+
+    /** A failed read of a setting shows the browser's default, not the opposite of it. */
+    @Test
+    public void settingsFallBackToTheBrowsersOwnDefaults() {
+        assertTrue("javascript ships on", SlothSettings.defaultFor("javascript"));
+        assertTrue("cookies ship on", SlothSettings.defaultFor("acceptCookies"));
+        assertTrue("autoplay blocking ships on", SlothSettings.defaultFor("blockAutoplay"));
+        assertTrue("tracker blocking ships on", SlothSettings.defaultFor("blockTrackers"));
+        assertTrue("screenshot blocking ships on", SlothSettings.defaultFor("screenGuard"));
+        assertFalse("and a setting that ships off stays off", SlothSettings.defaultFor("popups"));
+        assertEquals("text zoom ships at 100%", 100, SlothSettings.defaultNumberFor("textZoom"));
+        assertEquals("auto-lock ships at five minutes", 5,
+                SlothSettings.defaultNumberFor("autoLockMin"));
+    }
+
     private View findByViewTag(View v, String tag) {
         if (tag.equals(v.getTag())) {
             return v;

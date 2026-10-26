@@ -197,8 +197,12 @@ final class SlothCover {
             Rect r = rectOf(view);
             if (r != null) {
                 // a panel pushed off the screen is not covering anything, however large its
-                // box is: judge where it is drawn, not where it was laid out
+                // box is: judge where it is drawn, not where it was laid out. The offset belongs
+                // here because rectOf() measures the layout position and does not apply it -
+                // getLocationOnScreen does apply it, and adding it again reported a half-open
+                // panel at about half its real coverage.
                 r.offset(Math.round(view.getTranslationX()), Math.round(view.getTranslationY()));
+
                 int overlap = overlapArea(r, pageRect);
                 int own = Math.max(1, pageRect.width() * pageRect.height());
                 if (overlap * 100 / own >= 60) {
@@ -248,13 +252,28 @@ final class SlothCover {
     }
 
     /** Where a view is on screen, or null when it is not laid out at all. */
+    /**
+     * Where the view is laid out, in window coordinates, without its translation.
+     *
+     * <p>Deliberately not getLocationOnScreen: that applies each ancestor's matrix, so it already
+     * contains translationY and a caller that adds it again double-counts. Walking left/top (and
+     * subtracting each parent's scroll) is the layout position, which is the number this probe
+     * wants: translation is then applied exactly once, by the caller.</p>
+     */
     private static Rect rectOf(View view) {
         if (view.getWidth() <= 0 || view.getHeight() <= 0) {
             return null;
         }
-        int[] at = new int[2];
-        view.getLocationOnScreen(at);
-        return new Rect(at[0], at[1], at[0] + view.getWidth(), at[1] + view.getHeight());
+        int x = view.getLeft();
+        int y = view.getTop();
+        android.view.ViewParent parent = view.getParent();
+        for (int guard = 0; guard < 64 && parent instanceof View; guard++) {
+            View up = (View) parent;
+            x += up.getLeft() - up.getScrollX();
+            y += up.getTop() - up.getScrollY();
+            parent = up.getParent();
+        }
+        return new Rect(x, y, x + view.getWidth(), y + view.getHeight());
     }
 
     private static int overlapArea(Rect a, Rect b) {
