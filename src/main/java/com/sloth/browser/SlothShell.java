@@ -983,9 +983,23 @@ public final class SlothShell {
             // sheet's and a tap on the footer is still the footer's
             foot.setPadding(foot.getPaddingLeft(), foot.getPaddingTop(),
                     foot.getPaddingRight(), dp(activity, 30));
-            gripBar = new View(activity);
-            gripBar.setTag("close-grip");
-            gripBar.setContentDescription("Drag to close the drawer");
+            // the band was invisible, which is right for a gesture and wrong for discovery:
+            // a 36 x 3 dp line marks it without becoming the grabber band that was removed
+            FrameLayout gripWell = new FrameLayout(activity);
+            gripWell.setTag("close-grip");
+            gripWell.setContentDescription("Drag to close the drawer");
+            View gripMark = new View(activity);
+            android.graphics.drawable.GradientDrawable mark =
+                    new android.graphics.drawable.GradientDrawable();
+            mark.setShape(android.graphics.drawable.GradientDrawable.RECTANGLE);
+            mark.setCornerRadius(dp(activity, 2));
+            mark.setColor(0x3DFFFFFF);
+            gripMark.setBackground(mark);
+            FrameLayout.LayoutParams markLp = new FrameLayout.LayoutParams(
+                    dp(activity, 36), dp(activity, 3));
+            markLp.gravity = Gravity.CENTER;
+            gripWell.addView(gripMark, markLp);
+            gripBar = gripWell;
             gripBar.setOnTouchListener(new SlothDrag(new SlothLabel(shellDrag, "grip")));
             FrameLayout.LayoutParams gripLp = new FrameLayout.LayoutParams(
                     ViewGroup.LayoutParams.MATCH_PARENT, dp(activity, 30));
