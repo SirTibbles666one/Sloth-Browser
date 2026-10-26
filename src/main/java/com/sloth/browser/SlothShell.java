@@ -461,6 +461,16 @@ public final class SlothShell {
      * keeping a finished activity alive was our own reference. Released on detach and on
      * takeover, it cannot outlive the window it draws into.</p>
      */
+    /** Release the shell as a window teardown would, for the harness. */
+    static void releaseShellForTest() {
+        releaseShell();
+    }
+
+    /** The seat the drawer last rested on, for the harness. */
+    static int lastSeatForTest() {
+        return lastSeat;
+    }
+
     static void releaseShell() {
         stopLoops();
         lookups.clear();
@@ -495,6 +505,9 @@ public final class SlothShell {
         openIntent = false;
         settingsOpen = false;
         libraryPage = null;
+        // the next window's first drag must be able to tick: a seat remembered from a window
+        // that is gone would silence the very first settle of the new one
+        lastSeat = -1;
         expandedPx = 0;
         measuredContentH = 0;
         dragging = false;

@@ -452,6 +452,24 @@ final class SlothLibrary {
         }
     }
 
+    /** Copy a link and say so, both visibly and for a screen reader. */
+    private void copy(String url) {
+        try {
+            Object service = activity.getSystemService(android.content.Context.CLIPBOARD_SERVICE);
+            if (service instanceof android.content.ClipboardManager) {
+                ((android.content.ClipboardManager) service)
+                        .setPrimaryClip(android.content.ClipData.newPlainText("link", url));
+            }
+            note.setVisibility(View.VISIBLE);
+            note.setText("Link copied.");
+            note.announceForAccessibility("Link copied");
+        } catch (Throwable t) {
+            SlothLog.note("library could not copy: " + t.getClass().getSimpleName());
+            note.setVisibility(View.VISIBLE);
+            note.setText("Could not copy the link.");
+        }
+    }
+
     private View row(String url, String name, String when) {
         LinearLayout cell = new LinearLayout(activity);
         cell.setOrientation(LinearLayout.VERTICAL);
@@ -479,6 +497,15 @@ final class SlothLibrary {
             @Override
             public void onClick(View v) {
                 sink.openUrl(target);
+            }
+        });
+        // long press copies the link: the thing people want from a list of pages they have
+        // already been to, without leaving the list to get it
+        cell.setOnLongClickListener(new View.OnLongClickListener() {
+            @Override
+            public boolean onLongClick(View v) {
+                copy(target);
+                return true;
             }
         });
         LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(

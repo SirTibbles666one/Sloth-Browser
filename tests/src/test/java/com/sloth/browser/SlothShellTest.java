@@ -959,6 +959,48 @@ public class SlothShellTest {
         assertEquals(5, SlothSeats.choose(new int[]{}, 5, 2f, 0, 8));
     }
 
+    /** Long-pressing a row copies its link, and says so. */
+    @Test
+    @org.robolectric.annotation.Config(application = FakeApp.class)
+    public void longPressingARowCopiesItsLink() throws Exception {
+        TestActivity activity = build();
+        SlothShell.own(activity);
+        settle();
+        FakeApp app = (FakeApp) activity.getApplication();
+        app.vault.bookmarks.add(new com.sloth.browser.vault.Bookmark(
+                "https://example.org/kept", "Kept page"));
+
+        SlothShell.openLibrary(activity, "bookmarks");
+        settle();
+        View page = findByViewTag(overlayOf(activity), "library-page");
+        View row = findChip(page, "Kept page");
+        assertNotNull("the row", row);
+        View cell = row;
+        while (cell != null && cell != page && !cell.isLongClickable()) {
+            cell = (View) cell.getParent();
+        }
+        assertNotNull("a long-clickable row", cell);
+        assertTrue("the long press is handled", cell.performLongClick());
+
+        android.content.ClipboardManager clip = (android.content.ClipboardManager)
+                activity.getSystemService(android.content.Context.CLIPBOARD_SERVICE);
+        assertNotNull(clip.getPrimaryClip());
+        assertEquals("https://example.org/kept",
+                clip.getPrimaryClip().getItemAt(0).getText().toString());
+        assertTrue("and it says so: " + dumpText(page), dumpText(page).contains("Link copied"));
+    }
+
+    /** A window that is gone must not leave a seat behind that silences the next one's tick. */
+    @Test
+    public void releasingTheShellForgetsTheLastSeat() throws Exception {
+        TestActivity activity = build();
+        SlothShell.own(activity);
+        settle();
+        SlothShell.releaseShellForTest();
+        assertEquals("the remembered seat is cleared with the window", -1,
+                SlothShell.lastSeatForTest());
+    }
+
     private View findByViewTag(View v, String tag) {
         if (tag.equals(v.getTag())) {
             return v;
