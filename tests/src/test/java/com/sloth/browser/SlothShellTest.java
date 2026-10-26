@@ -761,6 +761,60 @@ public class SlothShellTest {
                 View.GONE, page.getVisibility());
     }
 
+    /** Relative times read like a person wrote them, and a missing stamp says nothing at all. */
+    @Test
+    public void relativeTimesAreWords() {
+        long now = System.currentTimeMillis();
+        assertEquals("just now", SlothLibrary.ago(now - 5_000L));
+        assertEquals("1 minute ago", SlothLibrary.ago(now - 65_000L));
+        assertEquals("2 hours ago", SlothLibrary.ago(now - 2L * 3600_000L));
+        assertEquals("3 days ago", SlothLibrary.ago(now - 3L * 86_400_000L));
+        assertEquals("2 months ago", SlothLibrary.ago(now - 65L * 86_400_000L));
+        assertEquals("a stamp we do not have prints nothing", "", SlothLibrary.ago(0));
+    }
+
+    /** Saving with no page open says so instead of saving a blank bookmark. */
+    @Test
+    public void savingWithNoPageOpenSaysSo() throws Exception {
+        TestActivity activity = build();
+        SlothShell.own(activity);
+        settle();
+        SlothShell.openLibrary(activity, "bookmarks");
+        settle();
+        View page = findByViewTag(overlayOf(activity), "library-page");
+        View save = findByViewTag(page, "library-save");
+        assertNotNull("the bookmarks page offers to save the page you are on", save);
+        assertEquals("the offer is on the bookmarks tab only", View.VISIBLE, save.getVisibility());
+        save.performClick();
+        settle();
+        assertTrue("it says why rather than appearing to save",
+                dumpText(page).toLowerCase().contains("nothing to save"));
+    }
+
+    /** Opening the library in a second window fills that window's page, not the first one's. */
+    @Test
+    public void theLibraryFollowsItsOwnWindow() throws Exception {
+        TestActivity first = build();
+        SlothShell.own(first);
+        settle();
+        SlothShell.openLibrary(first, "bookmarks");
+        settle();
+
+        TestActivity second = build();
+        SlothShell.own(second);
+        settle();
+        SlothShell.openLibrary(second, "history");
+        settle();
+
+        View page = findByViewTag(overlayOf(second), "library-page");
+        assertNotNull("the second window has a library page", page);
+        assertEquals("it is showing", View.VISIBLE, page.getVisibility());
+        String text = dumpText(page);
+        assertTrue("the page says History, not the first window's Bookmarks: " + text,
+                text.contains("History"));
+        assertFalse("and it is not left holding a stale title: " + text, text.startsWith("Bookmarks"));
+    }
+
     private View findByViewTag(View v, String tag) {
         if (tag.equals(v.getTag())) {
             return v;
@@ -2588,6 +2642,11 @@ public class SlothShellTest {
     @org.robolectric.annotation.GraphicsMode(org.robolectric.annotation.GraphicsMode.Mode.NATIVE)
     @org.robolectric.annotation.Config(qualifiers = "w411dp-h891dp-xxhdpi")
     public void renderEveryStateForReview() throws Exception {
+        // a visual pass, not a gate: it builds ten windows and draws each one, which is minutes
+        // of work and proves nothing a test can assert. Opt in with SLOTH_RENDER=1 so the suite
+        // stays a suite.
+        org.junit.Assume.assumeTrue("set SLOTH_RENDER=1 to run the render pass",
+                "1".equals(System.getenv("SLOTH_RENDER")));
         java.io.File dir = new java.io.File("/opt/data/cache/scratch/shots");
         dir.mkdirs();
         SlothShell.testNavInset = 144; // a three-button navigation bar
@@ -2619,6 +2678,12 @@ public class SlothShellTest {
         settle();
         shoot(activity, new java.io.File(dir, "17-diagnostics.png"));
         findByViewTag(overlayOf(activity), "diag-page").setVisibility(View.GONE);
+
+        SlothShell.openLibrary(activity, "history");
+        settle();
+        shoot(activity, new java.io.File(dir, "18-library.png"));
+        SlothShell.backOneLayer(activity);
+        settle();
 
         if (findByViewTag(drawerOf(activity), "palette-chip") != null) {
             findByViewTag(drawerOf(activity), "palette-chip").performClick();

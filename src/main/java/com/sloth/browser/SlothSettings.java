@@ -28,10 +28,10 @@ final class SlothSettings {
     private static final String[][][] GROUPS = {
             {  // heading, then its rows
                     {"TRACKING"},
-                    {"blockTrackers", "Block trackers", "stop known trackers loading"},
-                    {"dnt", "Do Not Track", "ask sites not to follow you"},
-                    {"gpc", "Global Privacy Control", "tell sites not to sell data"},
-                    {"fingerprintResist", "Resist fingerprinting", "blur what identifies you"},
+                    {"blockTrackers", "Block trackers", "blocks known trackers"},
+                    {"dnt", "Do Not Track", "asks sites not to follow you"},
+                    {"gpc", "Global Privacy Control", "tells sites not to sell data"},
+                    {"fingerprintResist", "Resist fingerprinting", "blurs what identifies you"},
                     {"privateDefault", "Private by default", "new tabs start private"},
                     {"screenGuard", "Block screenshots", "screenshots come out blank"},
             },
@@ -40,13 +40,13 @@ final class SlothSettings {
                     {"javascript", "JavaScript", "off breaks most sites"},
                     {"acceptCookies", "Cookies", "keep site logins working"},
                     {"thirdPartyCookies", "Third-party cookies", "cookies from other sites"},
-                    {"popups", "Popup windows", "sites may open a window"},
+                    {"popups", "Allow popups", "lets a site open a window"},
                     {"blockAutoplay", "Block autoplay", "nothing starts on its own"},
-                    {"prefetch", "Prefetch links", "fetch pages before you tap"},
+                    {"prefetch", "Prefetch links", "fetches pages before you tap"},
             },
             {
                     {"CONNECTION"},
-                    {"httpsOnly", "HTTPS only", "refuse an insecure page"},
+                    {"httpsOnly", "HTTPS only", "refuses an insecure page"},
                     {"webrtcBlock", "Block WebRTC leaks", "no local address through calls"},
             },
     };

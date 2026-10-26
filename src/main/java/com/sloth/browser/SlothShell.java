@@ -1522,7 +1522,7 @@ public final class SlothShell {
             page = found != null ? found : page;
             libraryPage = page;
         }
-        if (page == null || !SlothLibrary.show(kind)) {
+        if (page == null || !SlothLibrary.show(page, kind)) {
             SlothLog.note("no library page in this window; lending the panel instead");
             openPanel(activity, kind);
             return;
@@ -2246,6 +2246,32 @@ public final class SlothShell {
         page.bringToFront();
         page.setVisibility(View.VISIBLE);
         checkLayers("opened settings");
+    }
+
+    /** The address the browser is showing, for the library's save action. */
+    static String currentUrl(Activity activity) {
+        View real = resolve(activity, "urlBar");
+        if (real instanceof EditText) {
+            CharSequence text = ((EditText) real).getText();
+            if (text != null && text.toString().trim().length() > 0) {
+                return text.toString().trim();
+            }
+        }
+        return null;
+    }
+
+    /** The title of the page on screen, if the app keeps one we can read. */
+    static String currentTitle(Activity activity) {
+        for (String name : new String[]{"pageTitle", "titleText", "tabTitle"}) {
+            View view = resolve(activity, name);
+            if (view instanceof TextView) {
+                CharSequence text = ((TextView) view).getText();
+                if (text != null && text.toString().trim().length() > 0) {
+                    return text.toString().trim();
+                }
+            }
+        }
+        return null;
     }
 
     /**

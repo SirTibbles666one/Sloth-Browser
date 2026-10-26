@@ -29,22 +29,33 @@ final class SlothLibrary {
         void openUrl(String url);
     }
 
-    private static SlothLibrary instance;
+    /**
+     * One instance per page, keyed by the page itself.
+     *
+     * <p>A single static held the last page built, so a second window opened the library into
+     * the first window's page and brought an empty one to the front: a blank dark screen with
+     * the browser bar over it. The page is in the tree it was built into; the lookup has to be
+     * too.</p>
+     */
+    private static final java.util.Map<View, SlothLibrary> BY_PAGE =
+            new java.util.WeakHashMap<>();
 
     private final Activity activity;
     private final Sink sink;
     private final TextView title;
     private final TextView note;
     private final LinearLayout list;
+    private final TextView save;
     private String kind = "bookmarks";
 
     private SlothLibrary(Activity activity, Sink sink, TextView title, TextView note,
-                         LinearLayout list) {
+                         LinearLayout list, TextView save) {
         this.activity = activity;
         this.sink = sink;
         this.title = title;
         this.note = note;
         this.list = list;
+        this.save = save;
     }
 
     static View build(final Activity activity, final Sink sink, final Runnable onClose) {
@@ -73,6 +84,24 @@ final class SlothLibrary {
         LinearLayout.LayoutParams backLp = new LinearLayout.LayoutParams(dip(activity, 40), dip(activity, 40));
         head.addView(back, backLp);
 
+        final TextView save = label(activity, "Save page", 12f, SlothTheme.accent(), true);
+        save.setTag("library-save");
+        save.setPadding(dip(activity, 12), dip(activity, 8), dip(activity, 12), dip(activity, 8));
+        save.setBackground(pill(activity, SlothTheme.card(), SlothTheme.lineAt(0x2E)));
+        save.setVisibility(View.GONE);
+        save.setContentDescription("Save this page as a bookmark");
+        final SlothLibrary[] holder = new SlothLibrary[1];
+        save.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                if (holder[0] != null) {
+                    holder[0].saveCurrent();
+                }
+            }
+        });
+        head.addView(save, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+
         TextView title = label(activity, "Bookmarks", 22f, SlothTheme.ink(), true);
         LinearLayout.LayoutParams titleLp = new LinearLayout.LayoutParams(
                 0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f);
@@ -95,21 +124,24 @@ final class SlothLibrary {
 
         page.addView(column, new FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
-        instance = new SlothLibrary(activity, sink, title, note, list);
+        holder[0] = new SlothLibrary(activity, sink, title, note, list, save);
+        BY_PAGE.put(page, holder[0]);
         return page;
     }
 
-    /** Fill the page for one kind and say whether there is a page to show at all. */
-    static boolean show(String kind) {
-        if (instance == null) {
+    /** Fill one page for one kind and say whether that page can be shown at all. */
+    static boolean show(View page, String kind) {
+        SlothLibrary library = page == null ? null : BY_PAGE.get(page);
+        if (library == null) {
             return false;
         }
-        instance.fill(kind);
+        library.fill(kind);
         return true;
     }
 
     private void fill(String kind) {
         this.kind = kind;
+        save.setVisibility("bookmarks".equals(kind) ? View.VISIBLE : View.GONE);
         title.setText("bookmarks".equals(kind) ? "Bookmarks"
                 : "downloads".equals(kind) ? "Downloads" : "History");
         list.removeAllViews();
@@ -179,6 +211,82 @@ final class SlothLibrary {
             return call(vault, "getDownloads");
         }
         return call(vault, "getHistory");
+    }
+
+    /**
+     * Save the page the browser is showing as a bookmark.
+     *
+     * <p>The vault is the app's own store, so the bookmark lands where the browser's own list
+     * would put it: construct Bookmark(url, title), add it to the live list getBookmarks()
+     * returns, and persist. If any of that does not resolve, say so rather than appearing to
+     * save and losing it.</p>
+     */
+    private void saveCurrent() {
+        String url = SlothShell.currentUrl(activity);
+        if (url == null || url.trim().length() == 0) {
+            note.setVisibility(View.VISIBLE);
+            note.setText("Nothing to save: no page is open yet.");
+            return;
+        }
+        try {
+            Object vault = call(activity.getApplication(), "getVault");
+            Class<?> bookmark = Class.forName("com.sloth.browser.vault.Bookmark");
+            Object entry = bookmark.getConstructor(String.class, String.class)
+                    .newInstance(url, titleFor(url));
+            Object list = call(vault, "getBookmarks");
+            if (!(list instanceof java.util.List)) {
+                throw new IllegalStateException("the vault has no bookmark list");
+            }
+            @SuppressWarnings("unchecked")
+            java.util.List<Object> bookmarks = (java.util.List<Object>) list;
+            for (Object existing : bookmarks) {
+                String have = first(existing, "getUrl");
+                if (have != null && have.equals(url)) {
+                    note.setVisibility(View.VISIBLE);
+                    note.setText("Already saved.");
+                    return;
+                }
+            }
+            bookmarks.add(entry);
+            call(vault, "persist");
+            SlothLog.note("library saved " + url);
+            fill("bookmarks");
+        } catch (Throwable t) {
+            SlothLog.note("library could not save: " + t.getClass().getSimpleName());
+            note.setVisibility(View.VISIBLE);
+            note.setText("Could not save this page. Diagnostics has the reason.");
+        }
+    }
+
+    private String titleFor(String url) {
+        String shown = SlothShell.currentTitle(activity);
+        return shown == null || shown.trim().length() == 0 ? url : shown.trim();
+    }
+
+    /** "3 hours ago" for a timestamp in milliseconds; empty for a timestamp that is not one. */
+    static String ago(long at) {
+        if (at <= 0) {
+            return "";
+        }
+        long seconds = Math.max(0, (System.currentTimeMillis() - at) / 1000L);
+        if (seconds < 60) {
+            return "just now";
+        }
+        long minutes = seconds / 60;
+        if (minutes < 60) {
+            return minutes + (minutes == 1 ? " minute ago" : " minutes ago");
+        }
+        long hours = minutes / 60;
+        if (hours < 24) {
+            return hours + (hours == 1 ? " hour ago" : " hours ago");
+        }
+        long days = hours / 24;
+        if (days < 30) {
+            return days + (days == 1 ? " day ago" : " days ago");
+        }
+        long months = days / 30;
+        return months < 12 ? months + (months == 1 ? " month ago" : " months ago")
+                : (months / 12) + ((months / 12) == 1 ? " year ago" : " years ago");
     }
 
     private void unavailable(String what, Throwable why) {
@@ -301,7 +409,9 @@ final class SlothLibrary {
                 if (url == null) {
                     continue;
                 }
-                rows.add(new String[]{url, name});
+                // history and downloads carry when it happened; a bookmark may not, and an
+                // empty stamp is left out rather than printed as 1970
+                rows.add(new String[]{url, name, ago(longAt(item))});
             }
         }
         list.removeAllViews();
@@ -316,11 +426,11 @@ final class SlothLibrary {
                 + ("bookmarks".equals(kind) ? ", newest first."
                 : "downloads".equals(kind) ? ", newest first." : ", most recent first."));
         for (String[] row : rows) {
-            list.addView(row(row[0], row[1]));
+            list.addView(row(row[0], row[1], row[2]));
         }
     }
 
-    private View row(String url, String name) {
+    private View row(String url, String name, String when) {
         LinearLayout cell = new LinearLayout(activity);
         cell.setOrientation(LinearLayout.VERTICAL);
         cell.setPadding(0, dip(activity, 11), 0, dip(activity, 11));
@@ -335,7 +445,8 @@ final class SlothLibrary {
         heading.setEllipsize(android.text.TextUtils.TruncateAt.END);
         cell.addView(heading);
 
-        TextView under = label(activity, url, 11.5f, SlothTheme.muted(), false);
+        TextView under = label(activity, when.length() == 0 ? url : url + "  \u00b7  " + when,
+                11.5f, SlothTheme.muted(), false);
         under.setMaxLines(1);
         under.setEllipsize(android.text.TextUtils.TruncateAt.MIDDLE);
         under.setPadding(0, dip(activity, 3), 0, 0);
@@ -353,6 +464,18 @@ final class SlothLibrary {
         lp.bottomMargin = dip(activity, 6);
         cell.setLayoutParams(lp);
         return cell;
+    }
+
+    /** A long getter, or 0 when the entry does not carry one. */
+    private static long longAt(Object item) {
+        try {
+            java.lang.reflect.Method m = item.getClass().getMethod("getAt");
+            m.setAccessible(true);
+            Object v = m.invoke(item);
+            return v instanceof Number ? ((Number) v).longValue() : 0L;
+        } catch (Throwable ignored) {
+            return 0L;
+        }
     }
 
     /** Ask an item for the first of several getter names that exists, as a string. */
