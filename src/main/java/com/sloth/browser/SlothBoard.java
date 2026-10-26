@@ -1322,8 +1322,10 @@ final class SlothBoard {
     private void tap(String bindingName) {
         if (bindingName != null && bindingName.startsWith("panel:")) {
             String kind = bindingName.substring(6);
-            if ("bookmarks".equals(kind) || "history".equals(kind)) {
-                // these two are records the engine can hand over; our page lists them itself
+            if ("bookmarks".equals(kind) || "history".equals(kind)
+                    || "downloads".equals(kind)) {
+                // these three are records the app or the engine can hand over; our page lists
+                // them itself instead of lending the panel and hoping it draws in time
                 SlothShell.openLibrary(activity, kind);
                 return;
             }

@@ -110,10 +110,35 @@ final class SlothLibrary {
 
     private void fill(String kind) {
         this.kind = kind;
-        title.setText("bookmarks".equals(kind) ? "Bookmarks" : "History");
+        title.setText("bookmarks".equals(kind) ? "Bookmarks"
+                : "downloads".equals(kind) ? "Downloads" : "History");
         list.removeAllViews();
         note.setText("Asking the browser for its list\u2026");
         note.setVisibility(View.VISIBLE);
+        if (!listing()) {
+            return;
+        }
+    }
+
+    /**
+     * Fill from the best source this build has: the app's own vault first, the engine second.
+     *
+     * <p>The vault is what the browser's panels read - SlothApp holds the one instance and its
+     * records are already in memory - so it is both the honest source and the cheap one. The
+     * engine's storage controller is the fallback for a build whose vault is empty.</p>
+     */
+    private boolean listing() {
+        Object list = null;
+        Throwable vaultWhy = null;
+        try {
+            list = vaultList(kind);
+        } catch (Throwable t) {
+            vaultWhy = t;
+        }
+        if (list instanceof java.lang.Iterable && ((java.lang.Iterable<?>) list).iterator().hasNext()) {
+            render(list);
+            return true;
+        }
         try {
             Object runtime = runtimeOf(activity);
             if (runtime == null) {
@@ -121,11 +146,39 @@ final class SlothLibrary {
             }
             Object storage = call(runtime, "getStorageController");
             Object store = call(storage, "bookmarks".equals(kind) ? "getBookmarks" : "getHistory");
-            Object result = listOn(store);
-            accept(result);
-        } catch (Throwable t) {
-            unavailable("the browser's own list", t);
+            accept(listOn(store));
+            return true;
+        } catch (Throwable engineWhy) {
+            if (list instanceof java.lang.Iterable) {
+                // the vault answered and it is simply empty: that is an answer, not a failure
+                render(list);
+                return true;
+            }
+            unavailable("the browser's own list",
+                    vaultWhy != null ? vaultWhy : engineWhy);
+            return false;
         }
+    }
+
+    /**
+     * The records SlothApp already has in memory.
+     *
+     * <p>Each name is a literal, straight through the reflective helper, so the build's name
+     * gate can see them: a computed getter name is a call the gate cannot check, which is how
+     * the first version of this class shipped a method that does not exist.</p>
+     */
+    private Object vaultList(String kind) throws Exception {
+        Object vault = call(activity.getApplication(), "getVault");
+        if (vault == null) {
+            throw new IllegalStateException("the app has no vault");
+        }
+        if ("bookmarks".equals(kind)) {
+            return call(vault, "getBookmarks");
+        }
+        if ("downloads".equals(kind)) {
+            return call(vault, "getDownloads");
+        }
+        return call(vault, "getHistory");
     }
 
     private void unavailable(String what, Throwable why) {
@@ -254,12 +307,14 @@ final class SlothLibrary {
         list.removeAllViews();
         if (rows.isEmpty()) {
             note.setVisibility(View.VISIBLE);
-            note.setText("bookmarks".equals(kind) ? "Nothing saved yet." : "No history yet.");
+            note.setText("bookmarks".equals(kind) ? "Nothing saved yet."
+                    : "downloads".equals(kind) ? "Nothing downloaded yet." : "No history yet.");
             return;
         }
         note.setVisibility(View.VISIBLE);
         note.setText(rows.size() + (rows.size() == 1 ? " page" : " pages")
-                + ("bookmarks".equals(kind) ? ", newest first." : ", most recent first."));
+                + ("bookmarks".equals(kind) ? ", newest first."
+                : "downloads".equals(kind) ? ", newest first." : ", most recent first."));
         for (String[] row : rows) {
             list.addView(row(row[0], row[1]));
         }

@@ -43,9 +43,18 @@ def uses(sources):
     shape = re.compile(
         r'"(btn[A-Za-z0-9_]+|slot[A-Za-z0-9_]+|urlBar|pageInfo|tabCount|omniLock|'
         r'panel[A-Za-z0-9_]*|chrome[A-Za-z0-9_]+|settings|geckoView)"')
+    # and any method name the shell invokes through its reflective call(target, "name") helper:
+    # those are requirements too, and a build without them fails at runtime in the one screen a
+    # person opened on purpose. Candidate lists (first(item, "getUrl", "getURL")) are excluded -
+    # there, absence is the design.
+    called = re.compile(
+        r'\bcall\(\s*(?:[^,()]|\([^()]*\))+,\s*"([A-Za-z_$][A-Za-z0-9_$]*)"\s*\)')
     names = set()
     for path in sources:
-        for match in shape.finditer(Path(path).read_text()):
+        text = Path(path).read_text()
+        for match in shape.finditer(text):
+            names.add(match.group(1))
+        for match in called.finditer(text):
             names.add(match.group(1))
     return names
 
