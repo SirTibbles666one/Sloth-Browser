@@ -386,6 +386,7 @@ final class SlothBoard {
 
     private View tabStrip() {
         tabRow = new LinearLayout(activity);
+        tabRow.setTag("tab-row");
         tabRow.setOrientation(LinearLayout.HORIZONTAL);
         tabRow.setPadding(0, dp(4), 0, dp(8));
         return tabRow;
@@ -839,6 +840,10 @@ final class SlothBoard {
                             .edit().putString("note", s.toString()).apply();
                 } catch (Throwable ignored) {
                 }
+                // the card said "empty" over a full note: the counter was written once, at build
+                if (noteStat != null) {
+                    noteStat.setText(s.length() == 0 ? "empty" : s.length() + " chars");
+                }
             }
 
             public void afterTextChanged(android.text.Editable s) {
@@ -1199,7 +1204,10 @@ final class SlothBoard {
             return true;
         }
         for (int i = 0; i < strip.getChildCount(); i++) {
-            CharSequence want = SlothShell.label(strip.getChildAt(i));
+            // the cards are built from readableTitle(), so comparing against the raw label
+            // never matched for an untitled tab ("Tabs, 1" vs "Tab 1") and every refresh tore
+            // down and rebuilt the whole row, listeners and drawables included
+            CharSequence want = readableTitle(SlothShell.label(strip.getChildAt(i)), i + 1);
             CharSequence have = cardLabel(tabRow.getChildAt(i));
             if (want != null && want.length() > 0 && have != null
                     && !want.toString().contentEquals(have)) {

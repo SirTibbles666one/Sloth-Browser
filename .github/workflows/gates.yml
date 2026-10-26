@@ -55,13 +55,32 @@ jobs:
         working-directory: tests
         run: ./gradlew testDebugUnitTest --no-daemon --stacktrace
 
+      # A Gradle test task with no tests to run is SUCCESS, and the artifact step below ignores a
+      # missing report, so a moved source set used to be a green build. This is that incident,
+      # closed: the count has to be there and has to be at least what the harness contains.
+      - name: Test floor
+        working-directory: tests
+        run: |
+          python3 - <<'PY'
+          import glob, re, sys
+          floor = int(open("min-tests.txt").read().strip())
+          total = 0
+          for path in glob.glob("build/test-results/testDebugUnitTest/*.xml"):
+              head = open(path).read(400)
+              m = re.search(r'tests="(\d+)"', head)
+              if m:
+                  total += int(m.group(1))
+          print(f"{total} tests ran, floor is {floor}")
+          sys.exit(0 if total >= floor else 1)
+          PY
+
       - name: Report
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: harness-report
           path: tests/build/reports/tests/testDebugUnitTest
-          if-no-files-found: ignore
+          if-no-files-found: error
 
   names:
     name: reflective names

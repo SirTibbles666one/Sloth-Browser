@@ -32,7 +32,9 @@ final class SlothIcons extends View {
         paint.setStrokeCap(Paint.Cap.ROUND);
         paint.setStrokeJoin(Paint.Join.ROUND);
         setWillNotDraw(false);
-        setImportantForAccessibility(IMPORTANT_FOR_ACCESSIBILITY_NO);
+        // a drawn control has a label of its own (barIcon sets one), so it belongs in the
+        // accessibility tree; decoration opts out through decorative(). Setting NO here took
+        // every labelled bar button out of the tree, which is why they were silent
         setClickable(true);
         setFocusable(true);
     }

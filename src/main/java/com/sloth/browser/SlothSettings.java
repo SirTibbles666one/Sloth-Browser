@@ -292,7 +292,13 @@ final class SlothSettings {
                     next = min;
                 }
                 current[0] = next;
-                SlothPrefs.write(activity, field, next);
+                // the toggles above revert when a write is refused; a stepper that paints the new
+            // number anyway is the same lie in a different control
+            if (!SlothPrefs.write(activity, field, next)) {
+                SlothLog.error("could not save " + field);
+                value.setText(show(current[0], suffix, zeroIsNever));
+                return;
+            }
                 value.setText(show(next, suffix, zeroIsNever));
             }
         });

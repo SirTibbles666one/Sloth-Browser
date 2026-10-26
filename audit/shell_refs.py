@@ -19,6 +19,11 @@ from pathlib import Path
 IGNORED = {"binding", "slothworks"}
 
 
+def is_built_shell(blob):
+    """True when this APK is one of ours: it contains the shell's own class."""
+    return b"Lcom/sloth/browser/SlothShell;" in blob
+
+
 def dex_strings(apk):
     blob = b""
     with zipfile.ZipFile(apk) as z:
@@ -66,7 +71,19 @@ def main():
         sources.extend(sorted(p.rglob("*.java")) if p.is_dir() else [p])
 
     blob = dex_strings(apk)
+    if is_built_shell(blob):
+        # the names this gate looks for are string literals in our own sources, so in a built
+        # APK they are in the pool by construction and every check below is vacuous. Running it
+        # against the built APK was the mistake that made it print "every name exists" on a gate
+        # that could not fail.
+        print(f"{Path(apk).name} is a BUILT shell: its own strings make every name look present.")
+        print("Run this gate against the BASE app APK, not the build.")
+        raise SystemExit(2)
     names = sorted(uses(sources) - IGNORED)
+    if len(names) < 10:
+        print(f"only {len(names)} name(s) harvested from {len(sources)} source file(s):")
+        print("an empty or partial scan must not report that every name exists.")
+        raise SystemExit(1)
 
     missing = []
     for name in names:

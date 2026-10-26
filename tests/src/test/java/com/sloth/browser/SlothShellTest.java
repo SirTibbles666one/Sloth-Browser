@@ -500,14 +500,13 @@ public class SlothShellTest {
     /** The edge-to-edge request is judged on evidence, and reverted rather than argued with. */
     @Test
     public void aPanelUnderTheStatusStripRevertsTheWindow() {
-        // the rim is at the top of the window in the correct case too: it is the content that
-        // must clear the strip, so the rim alone is never evidence
+        // the rim at 0 with content cleared is the correct case, and the common one
         assertFalse("a rim at the top with content cleared is correct",
                 SlothShell.needsEdgeFallback(96, 0, 104));
         assertTrue("content printed under the clock means the request failed",
                 SlothShell.needsEdgeFallback(96, 0, 40));
-        assertTrue("and so does a panel lifted above the strip",
-                SlothShell.needsEdgeFallback(96, -40, 8));
+        assertTrue("a panel pushed down the screen means the window still fits its content",
+                SlothShell.needsEdgeFallback(96, 96, 104));
         assertFalse("a device without a strip cannot fail this way",
                 SlothShell.needsEdgeFallback(0, 0, 0));
     }
@@ -576,6 +575,75 @@ public class SlothShellTest {
         assertFalse("no home glyph left: " + tree, tree.contains("\u2302"));
         assertFalse("no flag glyph left: " + tree, tree.contains("\u2691"));
         assertFalse("no arrow glyph left: " + tree, tree.contains("\u2193"));
+    }
+
+    /** A window that was reverted is not asked again by the rebuild it caused. */
+    @Test
+    public void aRevertedWindowStaysReverted() throws Exception {
+        TestActivity activity = build();
+        java.lang.reflect.Field flag = SlothShell.class.getDeclaredField("edgeFellBack");
+        flag.setAccessible(true);
+        flag.set(null, true);
+        try {
+            SlothShell.own(activity);
+            settle();
+            assertFalse("the rebuild must not re-ask for edge to edge", SlothShell.edgeToEdge);
+        } finally {
+            flag.set(null, false);
+        }
+    }
+
+    /** The strip keeps no nav band inside it, however often the window reports its insets. */
+    @Test
+    public void thePeekStripDoesNotGrowANavBarBand() throws Exception {
+        TestActivity activity = build();
+        SlothShell.own(activity);
+        settle();
+        driveHeightSafe2(activity, peekHeight(activity) + 4);
+        settle();
+        SlothShell.applyBottomInset(activity, 48);
+        settle();
+        assertEquals("a strip is 72dp of tabs, not tabs plus a nav band",
+                0, drawerOf(activity).getPaddingBottom());
+    }
+
+    /** Detaching the shell releases the page it was holding, and the window facts with it. */
+    @Test
+    public void releasingTheShellLetsGoOfThePage() throws Exception {
+        TestActivity activity = build();
+        SlothShell.own(activity);
+        settle();
+        SlothShell.releaseShell();
+        assertEquals("the page's padding is forgotten with the window",
+                -1, SlothShell.pagePadBottomForTest());
+    }
+
+    /** Every drawn bar control stays in the accessibility tree, because each one is labelled. */
+    @Test
+    public void drawnBarControlsStayInTheAccessibilityTree() throws Exception {
+        TestActivity activity = build();
+        SlothShell.own(activity);
+        settle();
+        View reload = findByDescription(overlayOf(activity), "Reload");
+        assertNotNull("the reload control", reload);
+        assertTrue("a labelled control must not be marked decorative",
+                reload.getImportantForAccessibility() != View.IMPORTANT_FOR_ACCESSIBILITY_NO);
+    }
+
+    /** A refresh that changes nothing must not rebuild the tab row. */
+    @Test
+    public void anUnchangedRefreshKeepsTheSameCards() throws Exception {
+        TestActivity activity = build();
+        addTabs(activity, "Docs", "Mail");
+        SlothShell.own(activity);
+        settle();
+        ViewGroup row = (ViewGroup) findByViewTag(drawerOf(activity), "tab-row");
+        assertNotNull("a tab row", row);
+        Object before = row.getChildAt(0);
+        SlothShell.refreshForTest(activity);
+        settle();
+        assertTrue("the row was torn down and rebuilt for no change",
+                before == row.getChildAt(0));
     }
 
     private View findByViewTag(View v, String tag) {

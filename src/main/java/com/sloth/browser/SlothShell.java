@@ -68,6 +68,11 @@ public final class SlothShell {
         if (window == null) {
             return;
         }
+        if (edgeFellBack) {
+            // a window that was reverted stays reverted: rebuild() calls this again, and asking
+            // a second time undid the fallback one frame after it was applied
+            return;
+        }
         try {
             if (android.os.Build.VERSION.SDK_INT >= 30) {
                 window.setDecorFitsSystemWindows(false);
@@ -503,6 +508,19 @@ public final class SlothShell {
         peekShowing = false;
         lastPeekSignature = "";
         backdropView = null;
+        // the page root is the whole browser view tree: holding it after detach keeps a
+        // GeckoView alive, and keeping its padding makes the next window inherit the last one's
+        // insets - a rotation that changes the nav bar then pads the page wrongly
+        appRoot = null;
+        appRootPadTop = -1;
+        appRootPadBottom = -1;
+        // a new window has its own insets, and may judge the edge request again
+        statusInset = 0;
+        navSeen = -1;
+        edgeChecked = false;
+        // frames already posted check this before touching the tree
+        gen++;
+        animating = false;
         lastProbe = 0;
         SlothCover.forget();
         owner = null;
@@ -720,14 +738,6 @@ public final class SlothShell {
                     traceVelocity = velocity;
                     traceFlicked = Math.abs(velocity) > 0.55f;
                     traceMs = android.os.SystemClock.uptimeMillis() - traceMs;
-                    // The last sample of a gesture may never have reached a frame: coalescing
-                    // keeps one sample per loop turn, and a finger that lifts between two
-                    // turns leaves its final travel unapplied. Apply it here, before the target
-                    // is chosen, or the sheet settles from a height the finger already left.
-                    if (dragPending != Integer.MIN_VALUE) {
-                        setDrawerHeight(activity, Math.max(0, Math.min(dragPending, fullHeight(activity))));
-                        dragPending = Integer.MIN_VALUE;
-                    }
                     // the commit: the page takes its real offset once, now that the finger is up
                     if (appRootPadTop >= 0) {
                         alignPageToBar(activity, drawer == null ? 0 : drawer.getLayoutParams().height, false);
@@ -1937,6 +1947,11 @@ public final class SlothShell {
         return false;
     }
 
+    /** The refresh the 800ms tick runs, for the harness. */
+    static void refreshForTest(Activity activity) {
+        refresh(activity);
+    }
+
     /** The page's bottom padding as the shell set it, for the harness. */
     static int pagePadBottomForTest() {
         return appRootPadBottom;
@@ -2576,7 +2591,12 @@ public final class SlothShell {
             }
             return;
         }
-        int top = pagePaddingFor(rootAt[1], surfaceBottom);
+        // getLocationOnScreen walks the hierarchy applying each view's matrix, so rootAt[1]
+        // already contains the translationY this method sets. Feeding it back makes the live
+        // branch self-referential: the page converges on half the travel and the commit leaves
+        // it short. Undo it once, here.
+        int rootTop = rootAt[1] + Math.round(appRoot.getTranslationY());
+        int top = pagePaddingFor(rootTop, surfaceBottom);
         int committed = appRoot.getPaddingTop();
         if (live) {
             // the page follows the sheet without being measured
@@ -3369,7 +3389,9 @@ public final class SlothShell {
         }
         navSeen = inset;
         if (sheetView != null) {
-            sheetView.setPadding(0, 0, 0, inset);
+            // the strip deliberately has no nav band inside it; writing it back here put a
+            // nav-height stripe of empty paper inside the 72dp strip on the next inset dispatch
+            sheetView.setPadding(0, 0, 0, peekShowing ? 0 : inset);
         }
     }
 
@@ -3386,10 +3408,12 @@ public final class SlothShell {
             // a device with no status bar cannot fail this way, and knows nothing yet
             return false;
         }
-        // the panel's rim sits at the top of the window by design; it is the panel's content that
-        // must clear the strip. Judging the rim instead would revert a correct window on every
-        // device - which is what the first version of this check did, and a test caught it.
-        return surfaceTopPx + surfacePadTopPx < statusInsetPx;
+        // Two ways this can be wrong, and both are visible from the panel's screen position:
+        //  - its content starts under the strip (the clock printed on our bar);
+        //  - it has been pushed down, which is what a window still fitting its content does to a
+        //    Gravity.TOP child.
+        // The rim alone is not evidence: in the correct case it sits at 0 by design.
+        return surfaceTopPx > 0 || surfaceTopPx + surfacePadTopPx < statusInsetPx;
     }
 
     static void checkEdgeWindow(Activity activity) {
@@ -3401,7 +3425,9 @@ public final class SlothShell {
             return;
         }
         edgeChecked = true;
-        int top = surfaceView.getTop();
+        int[] at = new int[2];
+        surfaceView.getLocationOnScreen(at);
+        int top = at[1];
         int padTop = surfaceView.getPaddingTop();
         if (!needsEdgeFallback(statusInset, top, padTop)) {
             return;

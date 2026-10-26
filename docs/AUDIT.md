@@ -105,6 +105,68 @@ reset their origin at the claim; the two that carry pre-claim travel pass it onc
 the drawer's fade band, the 20dp grabber band, the divider under the bar, the drawn hinge and the
 now-dead `SlothEdge`.
 
+## 1232: what four parallel audits found, and what was fixed
+
+The audits were run by separate readers over the shell, the dashboard, the settings/back/diagnostics
+layer, and the build plumbing. Only the findings that were re-checked against the code here are listed.
+
+**Fixed, in this build**
+
+- **The edge-to-edge fallback undid itself.** `checkEdgeWindow` restored a fitted window and then
+  called `rebuild()`, which called `requestEdgeToEdge()` again and asked for edge-to-edge a second
+  time - one frame after giving it up - while `edgeChecked` stopped it being judged again. The
+  request now latches on `edgeFellBack`.
+- **The self-check could never fire.** It compared `surfaceView.getTop()` (always 0: a Gravity.TOP
+  child) plus a padding that is by construction larger than the strip. It now judges the panel's
+  screen position, which catches both ways this can be wrong: content under the strip, or a panel
+  pushed down by a window that still fits its content.
+- **The page offset was fed its own translation.** `getLocationOnScreen` walks the hierarchy
+  applying each view's matrix, so `rootAt[1]` already contained the `translationY` the method was
+  about to set. The live branch was self-referential: the page converged on half the travel, and the
+  commit left it short. The translation is now undone once before the arithmetic.
+- **A release flushed the same pending sample twice**, the second time into a condition already
+  false; the duplicate is gone.
+- **`releaseShell` kept the page.** `appRoot` and its paddings survived detach (a GeckoView held
+  alive, and the next window inheriting the last one's insets), alongside `statusInset`, `navSeen`
+  and `edgeChecked`. All cleared, and the generation bumped so posted frames stop.
+- **The strip grew a nav band.** `applyBottomInset` wrote the nav padding unconditionally, putting a
+  nav-height stripe of empty paper inside the 72dp strip on any later inset dispatch. It respects
+  the peek face now.
+- **Drawn bar controls were removed from the accessibility tree.** `SlothIcons` set
+  `IMPORTANT_FOR_ACCESSIBILITY_NO` for every icon, so the content descriptions the bar sets were
+  never spoken. Only `decorative()` opts out now.
+- **The note counter never moved**: it was written once at build, so a full note still read
+  "empty".
+- **Every refresh rebuilt the tab row**: `stale()` compared the card's `readableTitle()` against the
+  raw label, which never matched for an untitled tab ("Tab 1" vs "Tabs, 1").
+- **A stepper painted a value it could not save**, where the toggles beside it revert.
+
+**Fixed in the gates, because a green run proved nothing**
+
+- `ship_gate.py` reported `0/0 source classes` and `Ship gate passed` on a zip of two blobs, and
+  skipped the certificate and v2/v3 checks entirely because `tools/android-16/apksigner` does not
+  exist. It now fails on an empty scan, resolves `aapt2`/`apksigner` from the SDK, reads versionCode
+  as an integer attribute instead of grepping for its digits, and rejects a truncated zip. Verified
+  failing: wrong version, empty source dir.
+- `shell_refs.py` looked for the shell's own string literals in the shell's own dex, so it could
+  never fail. It now refuses a built APK (exit 2) and refuses an empty scan.
+- CI: a test-count floor (`tests/min-tests.txt`) after the harness, and the report artifact is an
+  error when missing.
+
+**Left open, with reasons**
+
+- `SlothSettings` handles BACK in an `OnKeyListener` on the page, so the tested `SlothBack` branch
+  is not the one that runs on a phone (a press rebuilds the shell instead of hiding one layer).
+  Fixing it means routing the page's key to `backOneLayer` and re-testing the whole order; it is the
+  next build.
+- `SlothCover` applies `translationY` twice (its rect already includes it), so a half-open panel is
+  reported at about half its real coverage. The discriminating test needs a laid-out activity the
+  harness cannot provide yet.
+- Two toggles read with a hardcoded `false` fallback while the model's defaults are `true`, so a
+  failed read shows "off" for six rows. Needs a per-row default table.
+- Weighted board children measure 0 high inside a wrap-content parent, and hiding the calculator
+  leaves its keypad behind. Both need the widget registry rather than one-line fixes.
+
 ## Open, with reasons
 
 - **The status bar strip is painted by us, but the window is not edge-to-edge.** Our scrim covers
