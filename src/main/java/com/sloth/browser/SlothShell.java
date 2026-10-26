@@ -2933,7 +2933,10 @@ public final class SlothShell {
         }
         // not at the peek: there the sheet is deliberately shorter than the board it hides,
         // and capping it against that content would stretch it back into empty paper
-        if (h > 0 && measuredContentH > 0 && !peekShowing && !dragging) {
+        // not while a settle is running either: an animation to the full seat would be capped
+        // back to the content height on its own frames, which is how a full pull ended up with
+        // the panel dropping back down onto the tab strip
+        if (h > 0 && measuredContentH > 0 && !peekShowing && !dragging && !animating) {
             // a sheet does not need to be taller than what it holds - the light render
             // showed the drawer stretched past its content into a band of empty paper
             // a little air under the last row, not a band: the panel must not open taller

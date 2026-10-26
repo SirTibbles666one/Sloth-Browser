@@ -31,10 +31,21 @@ final class SlothSeats {
      * @param velocity px/ms, positive is downward (opening)
      * @param peek     the peek seat, which an upward flick passes through
      * @param slop     how close counts as "already there", in pixels
+     *
+     * <p>A release at the top seat stays at the top seat whatever the velocity: the upward
+     * throw that closes the drawer is a gesture from a lower seat, and treating it as a close
+     * from the top is what dropped the panel back to the strip after a full pull.</p>
      */
     static int choose(int[] seats, int height, float velocity, int peek, int slop) {
         if (seats.length == 0) {
             return height;
+        }
+        int top = seats[seats.length - 1];
+        if (height >= top - slop) {
+            // the far end: an upward throw at the top has nowhere to go. Flicking up to close is
+            // a gesture from further down - at the top it means "stay open", which is what
+            // dragging the bar all the way up and letting go asks for
+            return top;
         }
         int target = -1;
         if (Math.abs(velocity) > FLICK) {

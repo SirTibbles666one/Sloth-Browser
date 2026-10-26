@@ -1085,6 +1085,23 @@ public class SlothShellTest {
         assertFalse("under the slop", SlothSheetScroll.ownsTheSwipe(4f, 0f, slop, false, true, true));
     }
 
+    /** A full pull stays full: an upward throw at the top has nowhere to go. */
+    @Test
+    public void aFullPullStaysOpen() {
+        int[] seats = new int[]{0, 72, 400, 800};
+        assertEquals("released at the top with upward momentum",
+                800, SlothSeats.choose(seats, 800, -1.5f, 72, 18));
+        assertEquals("released a hair below the top, still thrown upward",
+                800, SlothSeats.choose(seats, 790, -1.5f, 72, 18));
+        assertEquals("and a slow release at the top stays too",
+                800, SlothSeats.choose(seats, 800, 0f, 72, 18));
+        // below the top the upward throw still closes: that is the gesture that shuts it
+        assertEquals("an upward flick from the fitted seat closes",
+                0, SlothSeats.choose(seats, 400, -1.5f, 72, 18));
+        assertEquals("an upward flick from partway down lands a seat lower",
+                400, SlothSeats.choose(seats, 700, -1.5f, 72, 18));
+    }
+
     private View findByViewTag(View v, String tag) {
         if (tag.equals(v.getTag())) {
             return v;
