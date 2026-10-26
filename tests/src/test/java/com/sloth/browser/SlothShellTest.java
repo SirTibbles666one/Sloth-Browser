@@ -927,8 +927,12 @@ public class SlothShellTest {
                 SlothSeats.choose(seats, 0, 1.2f, 72, 8));
         assertEquals("downward from the last seat stays at the last seat", 800,
                 SlothSeats.choose(seats, 800, 1.2f, 72, 8));
-        assertEquals("upward from full moves one seat down, not to the peek", 400,
+        // the top seat is the one place a flick does not move it: an upward throw there is the
+        // end of a full pull, and throwing the panel back down is what made a full pull undo
+        assertEquals("upward from full stays at full", 800,
                 SlothSeats.choose(seats, 800, -1.2f, 72, 8));
+        assertEquals("upward from just below full still moves one seat down", 400,
+                SlothSeats.choose(seats, 700, -1.2f, 72, 8));
         assertEquals("upward from the fitted seat closes, skipping the peek", 0,
                 SlothSeats.choose(seats, 400, -1.2f, 72, 8));
         assertEquals("upward from the peek closes", 0,
