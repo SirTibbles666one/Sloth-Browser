@@ -120,6 +120,7 @@ public final class SlothShell {
     private static boolean peekFromContent;
     /** True while the app's own settings screen owns the panel. */
     private static boolean settingsOpen;
+    private static View libraryPage;
     private static View dock;
     private static View main;
     private static int dockH = -1, dockTop, dockBottom, dockPadL, dockPadR, mainH;
@@ -491,6 +492,7 @@ public final class SlothShell {
         peekFromContent = false;
         openIntent = false;
         settingsOpen = false;
+        libraryPage = null;
         expandedPx = 0;
         measuredContentH = 0;
         dragging = false;
@@ -907,6 +909,25 @@ public final class SlothShell {
             root.addView(settingsPage, new FrameLayout.LayoutParams(
                     ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
             settingsPage.setVisibility(View.GONE);
+            libraryPage = SlothLibrary.build(activity, new SlothLibrary.Sink() {
+                @Override
+                public void openUrl(String url) {
+                    if (libraryPage != null) {
+                        libraryPage.setVisibility(View.GONE);
+                    }
+                    gotoUrl(activity, url);
+                }
+            }, new Runnable() {
+                @Override
+                public void run() {
+                    if (libraryPage != null) {
+                        libraryPage.setVisibility(View.GONE);
+                    }
+                }
+            });
+            root.addView(libraryPage, new FrameLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+            libraryPage.setVisibility(View.GONE);
             diagPage = SlothDiag.page(activity);
             root.addView(diagPage, new FrameLayout.LayoutParams(
                     ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
@@ -1486,6 +1507,58 @@ public final class SlothShell {
         verifyLoan(activity, kind, before);
     }
 
+    /**
+     * Bookmarks and history in our own page, drawn from the engine's records.
+     *
+     * <p>The panel loan is the fallback, not the plan: when the engine will not answer there is
+     * nothing to list, and lending the app its panel at least gives it a chance to draw.</p>
+     */
+    static void openLibrary(Activity activity, String kind) {
+        closeDrawerFor(activity);
+        View page = libraryPage;
+        if (page == null || page.getContext() != activity) {
+            View found = findTagged((ViewGroup) activity.findViewById(android.R.id.content),
+                    "library-page");
+            page = found != null ? found : page;
+            libraryPage = page;
+        }
+        if (page == null || !SlothLibrary.show(kind)) {
+            SlothLog.note("no library page in this window; lending the panel instead");
+            openPanel(activity, kind);
+            return;
+        }
+        page.bringToFront();
+        page.setVisibility(View.VISIBLE);
+        SlothLog.note("library opened: " + kind);
+    }
+
+    /**
+     * Open a page the library listed.
+     *
+     * <p>Through the omnibox and navigate(), the path the address pill already uses - writing
+     * the app's own field and letting the browser's routine read it keeps the app's widget and
+     * the page in step. The activity's own go() is the fallback, not the plan.</p>
+     */
+    static void gotoUrl(Activity activity, String url) {
+        View real = resolve(activity, "urlBar");
+        if (real instanceof EditText) {
+            EditText field = (EditText) real;
+            field.setText(url);
+            field.setSelection(field.getText().length());
+            if (navigate(activity, field)) {
+                SlothLog.note("library opened " + url);
+                return;
+            }
+        }
+        try {
+            call(activity, "go", new Class<?>[]{String.class}, new Object[]{url});
+            SlothLog.note("library opened " + url + " (direct)");
+        } catch (Throwable t) {
+            SlothLog.note("library could not open " + url + ": " + t.getClass().getSimpleName());
+            openDrawer(activity);
+        }
+    }
+
     /** Hand the app its panel at a real height, so its own lists have somewhere to draw. */
     static void lendPanel(Activity activity) {
         settingsOpen = true;
@@ -1916,6 +1989,12 @@ public final class SlothShell {
         if (diagPage != null && diagPage.getVisibility() == View.VISIBLE) {
             diagPage.setVisibility(View.GONE);
             SlothLog.note("back closed diagnostics");
+            return true;
+        }
+        if (libraryPage != null && libraryPage.getContext() == activity
+                && libraryPage.getVisibility() == View.VISIBLE) {
+            libraryPage.setVisibility(View.GONE);
+            SlothLog.note("back closed the library");
             return true;
         }
         if (settingsPage != null && settingsPage.getVisibility() == View.VISIBLE) {

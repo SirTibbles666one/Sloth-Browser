@@ -731,6 +731,36 @@ public class SlothShellTest {
                 pad.getVisibility());
     }
 
+    /** Bookmarks opens a list of our own, not a loaned blank panel. */
+    @Test
+    public void bookmarksOpenTheLibraryPage() throws Exception {
+        TestActivity activity = build();
+        SlothShell.own(activity);
+        settle();
+        SlothShell.openLibrary(activity, "bookmarks");
+        settle();
+        View page = findByViewTag(overlayOf(activity), "library-page");
+        assertNotNull("a library page", page);
+        assertEquals("the library page is showing", View.VISIBLE, page.getVisibility());
+        assertTrue("the page says what it found rather than staying blank",
+                dumpText(page).trim().length() > "BookmarksBack".length());
+    }
+
+    /** BACK closes the library before it reaches the drawer. */
+    @Test
+    public void backClosesTheLibraryFirst() throws Exception {
+        TestActivity activity = build();
+        SlothShell.own(activity);
+        settle();
+        SlothShell.openLibrary(activity, "history");
+        settle();
+        View page = findByViewTag(overlayOf(activity), "library-page");
+        assertEquals(View.VISIBLE, page.getVisibility());
+        assertTrue("back closed a layer", SlothShell.backOneLayer(activity));
+        assertEquals("the library page should be the layer back closed",
+                View.GONE, page.getVisibility());
+    }
+
     private View findByViewTag(View v, String tag) {
         if (tag.equals(v.getTag())) {
             return v;
