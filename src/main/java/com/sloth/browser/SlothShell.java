@@ -117,6 +117,8 @@ public final class SlothShell {
     private static View drawer;
     private static EditText address;
     private static int peekPx;
+    /** The seat the drawer last rested on, so haptics fire on a change and not a repeat. */
+    private static int lastSeat = -1;
     private static boolean peekFromContent;
     /** True while the app's own settings screen owns the panel. */
     private static boolean settingsOpen;
@@ -3376,56 +3378,18 @@ public final class SlothShell {
         int full = fullHeight(activity);
 
         int[] seats = new int[]{0, peek, Math.max(expanded, peek + dp(activity, 40)), full};
-        int target = -1;
+        int target = SlothSeats.choose(seats, h, velocity, peek, dp(activity, 8));
 
-        if (Math.abs(velocity) > 0.55f) {
-            // thrown: land on the next seat in the direction it was thrown, not the
-            // nearest one - a flick should always move the drawer somewhere
-            if (velocity > 0) {
-                for (int seat : seats) {
-                    if (seat > h + dp(activity, 8)) {
-                        target = seat;
-                        break;
-                    }
-                }
-                if (target < 0) {
-                    target = full;
-                }
-            } else {
-                // upward: from a full sheet a flick closes it, it does not park on the peek -
-                // the peek is what a downward pull finds first, not a stop on the way out
-                for (int i = seats.length - 1; i >= 0; i--) {
-                    if (seats[i] < h - dp(activity, 8)) {
-                        // an upward flick closes. The peek is the front door - what a
-                        // downward pull finds first - not a stop on the way out
-                        if (seats[i] == peek) {
-                            continue;
-                        }
-                        target = seats[i];
-                        break;
-                    }
-                }
-                if (target < 0) {
-                    target = 0;
-                }
-            }
-        } else if (velocity <= 0.05f && h <= peek + dp(activity, 20)) {
-            // let go near the shut end and it shuts: a sheet that has been dragged almost
-            // away must not spring back to the peek and look like it refused to close
-            target = 0;
-        } else {
-            // let go: the drawer settles where it is closest to, projected a little
-            float projected = h + velocity * 140f;
-            float best = Float.MAX_VALUE;
-            for (int seat : seats) {
-                float distance = Math.abs(seat - projected);
-                if (distance < best) {
-                    best = distance;
-                    target = seat;
-                }
+        // a seat change is worth a tick under the finger: the drag already ends where the
+        // person meant, but without it the sheet appears to stop somewhere on its own
+        if (target != lastSeat) {
+            lastSeat = target;
+            try {
+                drawer.performHapticFeedback(android.view.HapticFeedbackConstants.CLOCK_TICK);
+            } catch (Throwable ignored) {
+                // a device without haptics is not a fault
             }
         }
-
         traceTo = target;
         animateTo(activity, target);
         rememberOpenSize(activity, target > 0);

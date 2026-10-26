@@ -919,6 +919,46 @@ public class SlothShellTest {
         assertTrue("and says so: " + dumpText(page), dumpText(page).contains("Already saved"));
     }
 
+    /** A flick always moves somewhere, even from a seat. */
+    @Test
+    public void aFlickAlwaysMoves() {
+        int[] seats = {0, 72, 400, 800};
+        assertEquals("downward from shut: the next seat up", 72,
+                SlothSeats.choose(seats, 0, 1.2f, 72, 8));
+        assertEquals("downward from the last seat stays at the last seat", 800,
+                SlothSeats.choose(seats, 800, 1.2f, 72, 8));
+        assertEquals("upward from full moves one seat down, not to the peek", 400,
+                SlothSeats.choose(seats, 800, -1.2f, 72, 8));
+        assertEquals("upward from the fitted seat closes, skipping the peek", 0,
+                SlothSeats.choose(seats, 400, -1.2f, 72, 8));
+        assertEquals("upward from the peek closes", 0,
+                SlothSeats.choose(seats, 72, -1.2f, 72, 8));
+    }
+
+    /** A slow release settles nearest, projected a little in the direction of travel. */
+    @Test
+    public void aSlowReleaseSettlesNearest() {
+        int[] seats = {0, 72, 400, 800};
+        assertEquals("just under the peek, easing up: the peek", 72,
+                SlothSeats.choose(seats, 60, 0.1f, 72, 8));
+        assertEquals("just over the fitted seat, easing down: the fitted seat", 400,
+                SlothSeats.choose(seats, 380, 0.2f, 72, 8));
+        assertEquals("release near the shut end shuts", 0,
+                SlothSeats.choose(seats, 30, 0f, 72, 8));
+        assertEquals("a still release on a seat stays on it", 400,
+                SlothSeats.choose(seats, 400, 0f, 72, 8));
+        assertEquals("projection can carry it past the nearest seat", 800,
+                SlothSeats.choose(seats, 700, 0.5f, 72, 8));
+    }
+
+    /** One seat only: the arithmetic still answers something sane. */
+    @Test
+    public void oneSeatIsNotADivisionByZero() {
+        assertEquals(0, SlothSeats.choose(new int[]{0}, 0, 0f, 0, 8));
+        assertEquals(0, SlothSeats.choose(new int[]{0}, 0, 2f, 0, 8));
+        assertEquals(5, SlothSeats.choose(new int[]{}, 5, 2f, 0, 8));
+    }
+
     private View findByViewTag(View v, String tag) {
         if (tag.equals(v.getTag())) {
             return v;
