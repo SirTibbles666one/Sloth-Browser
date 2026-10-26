@@ -1162,21 +1162,6 @@ public class SlothShellTest {
                 SlothShell.dragTraceForTest().contains("by=grip"));
     }
 
-    /** A quick action's label shrinks to fit instead of being cut to "Downl...". */
-    @Test
-    public void quickActionLabelsShrinkToFit() throws Exception {
-        TestActivity activity = build();
-        SlothShell.own(activity);
-        settle();
-        View downloads = findText(overlayOf(activity), "Downloads");
-        assertNotNull("the Downloads action", downloads);
-        TextView label = (TextView) downloads;
-        assertTrue("it may shrink below its size", label.getAutoSizeMinTextSize() > 0f);
-        assertTrue("but never above it",
-                label.getAutoSizeMaxTextSize() >= label.getAutoSizeMinTextSize());
-        assertEquals("and it is still one line", 1, label.getMaxLines());
-    }
-
     private View findByViewTag(View v, String tag) {
         if (tag.equals(v.getTag())) {
             return v;

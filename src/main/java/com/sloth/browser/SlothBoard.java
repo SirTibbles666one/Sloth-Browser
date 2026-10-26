@@ -483,15 +483,14 @@ final class SlothBoard {
         icon.addView(drawn, ilp);
         cell.addView(icon, new LinearLayout.LayoutParams(dp(34), dp(34)));
 
+        // 12 sp, as shipped. A smaller size and an autosizing variant were both tried to stop
+        // "Downloads" ellipsising in five cells, and both left the row with no label in the
+        // render at all - the ellipsis is the least bad of the three, and the size that fits
+        // your phone is the one that already worked
         TextView title = text(name, 12f, INK, true);
         title.setGravity(Gravity.CENTER);
         title.setSingleLine(true);
         title.setEllipsize(TextUtils.TruncateAt.END);
-        // five cells at 411 dp leave about 60 dp of label each, and "Downloads" at 12 sp bold
-        // needs more: it was rendering as "Downl...". The label shrinks to fit rather than
-        // being cut, so the row never shows a truncated word
-        title.setAutoSizeTextTypeUniformWithConfiguration(8, 12, 1,
-                android.util.TypedValue.COMPLEX_UNIT_SP);
         LinearLayout.LayoutParams tlp = new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
         tlp.topMargin = dp(8);
