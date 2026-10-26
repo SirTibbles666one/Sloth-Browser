@@ -1106,6 +1106,39 @@ public class SlothShellTest {
                 400, SlothSeats.choose(seats, 700, -1.5f, 72, 18));
     }
 
+    /** Grabbing the sheet at the top and throwing it up shuts it completely. */
+    @Test
+    public void aFlickFromTheTopClosesCompletely() {
+        int[] seats = new int[]{0, 72, 400, 800};
+        assertEquals("grabbed at the top, thrown up: shut",
+                0, SlothSeats.choose(seats, 800, -1.5f, 72, 18, true));
+        assertEquals("a pull that arrived at the top stays",
+                800, SlothSeats.choose(seats, 800, -1.5f, 72, 18, false));
+        assertEquals("grabbed at the top and released slowly: still open",
+                800, SlothSeats.choose(seats, 800, 0f, 72, 18, true));
+        assertEquals("grabbed at the top and thrown down: still open",
+                800, SlothSeats.choose(seats, 800, 1.5f, 72, 18, true));
+    }
+
+    /** The sheet's bottom line is a drag handle, and only once the panel is open past the strip. */
+    @Test
+    public void theBottomBandIsAHandle() throws Exception {
+        TestActivity activity = build();
+        SlothShell.own(activity);
+        settle();
+        driveHeight(activity, peekHeight(activity));
+        settle();
+        View grip = findByViewTag(drawerOf(activity), "close-grip");
+        assertNotNull("a bottom band", grip);
+        assertEquals("hidden at the strip: it would sit on the squares",
+                View.GONE, grip.getVisibility());
+        driveHeight(activity, peekHeight(activity) + 300);
+        settle();
+        assertEquals("showing when the panel is open", View.VISIBLE, grip.getVisibility());
+        assertEquals("and it is a drag handle, not a tap target",
+                "Drag to close the drawer", String.valueOf(grip.getContentDescription()));
+    }
+
     private View findByViewTag(View v, String tag) {
         if (tag.equals(v.getTag())) {
             return v;

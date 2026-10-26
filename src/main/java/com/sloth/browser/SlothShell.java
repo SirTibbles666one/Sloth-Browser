@@ -124,6 +124,7 @@ public final class SlothShell {
     private static boolean settingsOpen;
     private static View libraryPage;
     private static View findBar;
+    private static View gripBar;
     private static View dock;
     private static View main;
     private static int dockH = -1, dockTop, dockBottom, dockPadL, dockPadR, mainH;
@@ -507,6 +508,7 @@ public final class SlothShell {
         settingsOpen = false;
         libraryPage = null;
         findBar = null;
+        gripBar = null;
         // the next window's first drag must be able to tick: a seat remembered from a window
         // that is gone would silence the very first settle of the new one
         lastSeat = -1;
@@ -974,6 +976,20 @@ public final class SlothShell {
             // no fade band and no grabber inside the sheet: the header above it is the
             // handle, and a fade says the panel is cut rather than continued
             holder.addView(foot);
+            // the bottom line of the sheet is a handle. The footer keeps its own height and
+            // the band underneath it belongs to the drag, so a pull started there is the
+            // sheet's and a tap on the footer is still the footer's
+            foot.setPadding(foot.getPaddingLeft(), foot.getPaddingTop(),
+                    foot.getPaddingRight(), dp(activity, 26));
+            gripBar = new View(activity);
+            gripBar.setTag("close-grip");
+            gripBar.setContentDescription("Drag to close the drawer");
+            gripBar.setOnTouchListener(new SlothDrag(shellDrag));
+            FrameLayout.LayoutParams gripLp = new FrameLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT, dp(activity, 26));
+            gripLp.gravity = Gravity.BOTTOM;
+            sheet.addView(gripBar, gripLp);
+            gripBar.setVisibility(View.GONE);
             sheet.addView(holder, new FrameLayout.LayoutParams(
                     ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
             if (holder.getLayoutParams() instanceof FrameLayout.LayoutParams) {
@@ -2947,6 +2963,11 @@ public final class SlothShell {
             }
         }
         applyUnion(activity, h > dp(activity, 6));
+        if (gripBar != null) {
+            // the band is the sheet's bottom edge: at the strip it would sit on the tab
+            // squares, so it only exists once the panel is open past them
+            gripBar.setVisibility(h > peekPx + dp(activity, 8) ? View.VISIBLE : View.GONE);
+        }
         dragWrites++;
         if (barWrapView == null) {
             return;
@@ -3460,7 +3481,8 @@ public final class SlothShell {
         int full = fullHeight(activity);
 
         int[] seats = new int[]{0, peek, Math.max(expanded, peek + dp(activity, 40)), full};
-        int target = SlothSeats.choose(seats, h, velocity, peek, dp(activity, 8));
+        int target = SlothSeats.choose(seats, h, velocity, peek, dp(activity, 8),
+                traceFrom >= full - dp(activity, 8));
 
         // a seat change is worth a tick under the finger: the drag already ends where the
         // person meant, but without it the sheet appears to stop somewhere on its own

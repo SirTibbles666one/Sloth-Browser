@@ -37,10 +37,28 @@ final class SlothSeats {
      * from the top is what dropped the panel back to the strip after a full pull.</p>
      */
     static int choose(int[] seats, int height, float velocity, int peek, int slop) {
+        return choose(seats, height, velocity, peek, slop, false);
+    }
+
+    /**
+     * The same choice, told whether the gesture started with the drawer already at the top.
+     *
+     * <p>That is the difference between two gestures that otherwise look identical at the end:
+     * a pull from below that arrives at the top and stays there, and a flick upward from a sheet
+     * already resting at the top, which means "shut it" and closes it completely.</p>
+     *
+     * @param grabbedAtTop the drag began at the top seat
+     */
+    static int choose(int[] seats, int height, float velocity, int peek, int slop,
+            boolean grabbedAtTop) {
         if (seats.length == 0) {
             return height;
         }
         int top = seats[seats.length - 1];
+        if (height >= top - slop && grabbedAtTop && velocity < -FLICK) {
+            // grabbed at the top and thrown up: nothing to open further, so it shuts
+            return 0;
+        }
         if (height >= top - slop) {
             // the far end: an upward throw at the top has nowhere to go. Flicking up to close is
             // a gesture from further down - at the top it means "stay open", which is what
