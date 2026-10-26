@@ -841,6 +841,84 @@ public class SlothShellTest {
         SlothLog.clear();
     }
 
+    /** A history list from the vault renders rows with titles and relative times. */
+    @Test
+    @org.robolectric.annotation.Config(application = FakeApp.class)
+    public void historyRowsComeFromTheVault() throws Exception {
+        TestActivity activity = build();
+        SlothShell.own(activity);
+        settle();
+        FakeApp app = (FakeApp) activity.getApplication();
+        long now = System.currentTimeMillis();
+        app.vault.history.add(new com.sloth.browser.vault.HistoryEntry(
+                "https://example.org/one", "First page", now - 2L * 3600_000L));
+        app.vault.history.add(new com.sloth.browser.vault.HistoryEntry(
+                "https://example.net/two", "", now - 5L * 86_400_000L));
+
+        SlothShell.openLibrary(activity, "history");
+        settle();
+        View page = findByViewTag(overlayOf(activity), "library-page");
+        String text = dumpText(page);
+        assertTrue("the first title is listed: " + text, text.contains("First page"));
+        assertTrue("with its age: " + text, text.contains("2 hours ago"));
+        assertTrue("a nameless entry falls back to its URL: " + text,
+                text.contains("https://example.net/two"));
+        assertTrue("and still has an age: " + text, text.contains("5 days ago"));
+        assertTrue("the count says two", text.contains("2 pages"));
+    }
+
+    /** Downloads come from the vault too, named rather than dressed as history. */
+    @Test
+    @org.robolectric.annotation.Config(application = FakeApp.class)
+    public void downloadRowsComeFromTheVault() throws Exception {
+        TestActivity activity = build();
+        SlothShell.own(activity);
+        settle();
+        FakeApp app = (FakeApp) activity.getApplication();
+        app.vault.downloads.add(new com.sloth.browser.vault.DownloadEntry(
+                "manual.pdf", "https://example.org/manual.pdf", System.currentTimeMillis() - 60_000L));
+
+        SlothShell.openLibrary(activity, "downloads");
+        settle();
+        String text = dumpText(findByViewTag(overlayOf(activity), "library-page"));
+        assertTrue("the title is Downloads: " + text, text.contains("Downloads"));
+        assertTrue("the file is listed: " + text, text.contains("manual.pdf"));
+        assertTrue("with its age: " + text, text.contains("1 minute ago"));
+    }
+
+    /** Saving the page on screen writes the app's own Bookmark into the live list. */
+    @Test
+    @org.robolectric.annotation.Config(application = FakeApp.class)
+    public void savingAPageAddsABookmarkOnce() throws Exception {
+        TestActivity activity = build();
+        SlothShell.own(activity);
+        settle();
+        ((android.widget.EditText) activity.binding.urlBar).setText("https://example.org/leaf");
+        FakeApp app = (FakeApp) activity.getApplication();
+
+        SlothShell.openLibrary(activity, "bookmarks");
+        settle();
+        View page = findByViewTag(overlayOf(activity), "library-page");
+        View save = findByViewTag(page, "library-save");
+        save.performClick();
+        settle();
+
+        assertEquals("one bookmark was added", 1, app.vault.bookmarks.size());
+        assertEquals("and the vault was asked to keep it", 1, app.vault.persisted);
+        Object entry = app.vault.bookmarks.get(0);
+        assertEquals("https://example.org/leaf",
+                entry.getClass().getMethod("getUrl").invoke(entry));
+        assertEquals("the title is the host, not the whole URL", "example.org",
+                entry.getClass().getMethod("getTitle").invoke(entry));
+        assertTrue("the list refreshes to show it: " + dumpText(page),
+                dumpText(page).contains("example.org"));
+
+        save.performClick();
+        settle();
+        assertEquals("saving twice does not duplicate", 1, app.vault.bookmarks.size());
+        assertTrue("and says so: " + dumpText(page), dumpText(page).contains("Already saved"));
+    }
+
     private View findByViewTag(View v, String tag) {
         if (tag.equals(v.getTag())) {
             return v;
