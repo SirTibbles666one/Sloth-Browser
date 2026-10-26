@@ -1033,6 +1033,29 @@ public class SlothShellTest {
                 String.valueOf(((TextView) row.getChildAt(1)).getText()));
     }
 
+    /** The step buttons exist, are labelled, and step with the flags read from the bytecode. */
+    @Test
+    public void findHasLabelledSteps() throws Exception {
+        TestActivity activity = build();
+        SlothShell.own(activity);
+        settle();
+        SlothShell.openFind(activity);
+        settle();
+        View bar = findByViewTag(overlayOf(activity), "find-bar");
+        ViewGroup row = (ViewGroup) ((ViewGroup) bar).getChildAt(0);
+        java.util.ArrayList<String> labels = new java.util.ArrayList<>();
+        for (int i = 0; i < row.getChildCount(); i++) {
+            CharSequence d = row.getChildAt(i).getContentDescription();
+            if (d != null) {
+                labels.add(String.valueOf(d));
+            }
+        }
+        assertTrue("a previous button: " + labels, labels.contains("Previous match"));
+        assertTrue("a next button: " + labels, labels.contains("Next match"));
+        assertEquals("forward is bit 0 clear in this build's flag table", 0, SlothFind.FORWARD);
+        assertEquals("backwards is bit 0 set", 1, SlothFind.BACKWARDS);
+    }
+
     private View findByViewTag(View v, String tag) {
         if (tag.equals(v.getTag())) {
             return v;

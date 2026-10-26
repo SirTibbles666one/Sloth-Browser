@@ -19,10 +19,10 @@ import android.widget.TextView;
  * itself highlights them rather than by anything drawn over it. The count comes from the finder's
  * result: {@code total} matches, {@code current} highlighted.</p>
  *
- * <p>Stepping with next/previous is deliberately absent: this build exposes one
- * {@code find(String, int)} and no readable flag for "the next match", and inventing a bit for it
- * would be the silent-lookup bug this project keeps removing. Search, count and clear are what can
- * be done honestly here.</p>
+ * <p>The direction flags are read from the bytecode of this build, not guessed: {@code SessionFinder}'s
+ * static flag table maps {@code 0} to "forward" and {@code 1} to "backwards" (bit 3 is linksOnly,
+ * bit 1 matchCase, bit 2 wholeWord). One {@code find(String, int)} call with those flags is both the
+ * first search and the step, which is why there is no separate next/previous method to call.</p>
  */
 final class SlothFind {
 
@@ -34,6 +34,11 @@ final class SlothFind {
             super(activity);
         }
     }
+
+    /** "forward" in this build's flag table: bit 0 clear. */
+    static final int FORWARD = 0;
+    /** "backwards": bit 0 set. Read from SessionFinder's static flag list, not guessed. */
+    static final int BACKWARDS = 1;
 
     private final Activity activity;
     private final TextView count;
@@ -68,12 +73,20 @@ final class SlothFind {
         row.addView(field, new LinearLayout.LayoutParams(
                 0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
 
+        final TextView previous = step(activity, "\u2039", "Previous match");
+        final TextView next = step(activity, "\u203a", "Next match");
+
         final TextView count = new TextView(activity);
         count.setTextSize(12f);
         count.setTextColor(SlothTheme.muted());
         count.setPadding(pixels(activity, 8), 0, pixels(activity, 8), 0);
         count.setTag("find-count");
         row.addView(count, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+
+        row.addView(previous, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+        row.addView(next, new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT));
 
         TextView close = new TextView(activity);
@@ -106,15 +119,40 @@ final class SlothFind {
 
             @Override
             public void afterTextChanged(Editable s) {
-                find.search(s == null ? "" : s.toString());
+                find.search(s == null ? "" : s.toString(), FORWARD);
             }
         });
         bar.find = find;
+        previous.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                find.search(field.getText() == null ? "" : field.getText().toString(), BACKWARDS);
+            }
+        });
+        next.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                find.search(field.getText() == null ? "" : field.getText().toString(), FORWARD);
+            }
+        });
         return bar;
     }
 
-    /** Ask the engine for this query and report what it found. */
-    private void search(String query) {
+    /** A small step button: no glyph font, no icon asset, the same two strokes as the bar. */
+    private static TextView step(Activity activity, String glyph, String description) {
+        TextView view = new TextView(activity);
+        view.setText(glyph);
+        view.setTextSize(20f);
+        view.setTextColor(SlothTheme.ink());
+        view.setGravity(Gravity.CENTER);
+        view.setContentDescription(description);
+        view.setPadding(pixels(activity, 10), pixels(activity, 4),
+                pixels(activity, 10), pixels(activity, 4));
+        return view;
+    }
+
+    /** Ask the engine for this query, or for the next match in flags' direction. */
+    private void search(String query, int flags) {
         String text = query.trim();
         if (text.length() == 0) {
             count.setText("");
@@ -125,7 +163,7 @@ final class SlothFind {
             Object finder = finder();
             Object result = finder.getClass()
                     .getMethod("find", String.class, int.class)
-                    .invoke(finder, text, 0);
+                    .invoke(finder, text, flags);
             accept(result);
         } catch (Throwable t) {
             SlothLog.note("find unavailable: " + t.getClass().getSimpleName());
