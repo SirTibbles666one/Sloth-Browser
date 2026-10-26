@@ -1001,13 +1001,17 @@ public final class SlothShell {
             gripWell.addView(gripMark, markLp);
             gripBar = gripWell;
             gripBar.setOnTouchListener(new SlothDrag(new SlothLabel(shellDrag, "grip")));
-            FrameLayout.LayoutParams gripLp = new FrameLayout.LayoutParams(
+            final FrameLayout.LayoutParams gripLp = new FrameLayout.LayoutParams(
                     ViewGroup.LayoutParams.MATCH_PARENT, dp(activity, 30));
             gripLp.gravity = Gravity.BOTTOM;
-            sheet.addView(gripBar, gripLp);
             gripBar.setVisibility(View.GONE);
+            holder.setTag("drawer-holder");
             sheet.addView(holder, new FrameLayout.LayoutParams(
                     ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+            // the band goes on AFTER the holder: a sibling added before it is covered by it,
+            // and a handle that is drawn but under the content cannot be touched at all. The
+            // palette pickers are added after this, so a picker still sits over the band
+            sheet.addView(gripBar, gripLp);
             if (holder.getLayoutParams() instanceof FrameLayout.LayoutParams) {
                 // the content starts at the top of the sheet: the 20dp band above it was
                 // there for a grabber, and a band of panel with nothing in it is exactly the

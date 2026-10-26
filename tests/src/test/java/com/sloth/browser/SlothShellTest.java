@@ -1137,6 +1137,23 @@ public class SlothShellTest {
         assertEquals("showing when the panel is open", View.VISIBLE, grip.getVisibility());
         assertEquals("and it is a drag handle, not a tap target",
                 "Drag to close the drawer", String.valueOf(grip.getContentDescription()));
+
+        // drawn is not the same as touchable: a sibling added before the content is covered by
+        // it, and the band passed its own test while being unreachable on the phone
+        ViewGroup sheet = (ViewGroup) drawerOf(activity);
+        int holderIndex = -1;
+        int gripIndex = -1;
+        for (int i = 0; i < sheet.getChildCount(); i++) {
+            if ("drawer-holder".equals(sheet.getChildAt(i).getTag())) {
+                holderIndex = i;
+            }
+            if (sheet.getChildAt(i) == grip) {
+                gripIndex = i;
+            }
+        }
+        assertTrue("the holder is in the sheet", holderIndex >= 0);
+        assertTrue("and the band is added after it: holder=" + holderIndex
+                + " band=" + gripIndex, gripIndex > holderIndex);
     }
 
     /** The trace says which surface took the drag: the first question when it feels wrong. */
