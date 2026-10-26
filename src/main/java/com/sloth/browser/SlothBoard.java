@@ -61,6 +61,18 @@ final class SlothBoard {
     private TextView tabsStat;
     private TextView noteStat;
     /** Widget tiles by kind, and the kinds the owner has put away. */
+    /**
+     * Every view a widget owns, by kind.
+     *
+     * <p>A widget used to be three unrelated facts: a builder method, a hand-written addView at a
+     * fixed slot, and a name in a set of hidden kinds. Only the tile was registered, so the
+     * calculator's keypad - added beside its card rather than inside it - stayed on screen when the
+     * widget was switched off. One map from kind to the views it owns makes hiding whole.</p>
+     */
+    /** Views this class hid itself, so un-hiding restores only what it took away. */
+    private final java.util.HashSet<View> hiddenByUs = new java.util.HashSet<>();
+    private final java.util.LinkedHashMap<String, java.util.ArrayList<View>> widgetViews =
+            new java.util.LinkedHashMap<>();
     private final java.util.LinkedHashMap<String, LinearLayout> widgetTiles =
             new java.util.LinkedHashMap<>();
     private final java.util.LinkedHashSet<String> hiddenWidgets = new java.util.LinkedHashSet<>();
@@ -489,13 +501,18 @@ final class SlothBoard {
     private View widgets() {
         LinearLayout grid = new LinearLayout(activity);
         grid.setOrientation(LinearLayout.VERTICAL);
+        grid.setTag("widget-grid");
 
         LinearLayout first = row();
         first.addView(widget("clock", card("Clock", clockCard())), weight());
         first.addView(widget("calc", calculatorCard()), weight());
         grid.addView(first);
 
-        grid.addView(calculatorPad());
+        View pad = calculatorPad();
+        // the pad is part of the calculator, not a neighbour of it: owned by the same kind, so
+        // switching the calculator off takes its keys with it
+        own("calc", pad);
+        grid.addView(pad);
         grid.addView(widget("notes", wide("Notes", notesCard())));
 
         // the mock's counters, with numbers that exist: how many tabs there are, and
@@ -504,6 +521,8 @@ final class SlothBoard {
         counters.addView(widget("tabs", card("Tabs", counterBody("0", "open", true))), weight());
         counters.addView(widget("note", card("Note", counterBody("empty", "on this phone", false))), weight());
         addFull(grid, counters);
+        // one pass, once the grid holds everything it is going to hold
+        applyWidgetVisibility();
         return grid;
     }
 
@@ -557,6 +576,7 @@ final class SlothBoard {
 
     private View calculatorPad() {
         calcPad = new LinearLayout(activity);
+        calcPad.setTag("calc-pad");
         calcPad.setOrientation(LinearLayout.VERTICAL);
         calcPad.setVisibility(View.GONE);
         LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(
@@ -695,9 +715,22 @@ final class SlothBoard {
     private LinearLayout widget(String kind, View view) {
         LinearLayout tile = (LinearLayout) view;
         widgetTiles.put(kind, tile);
-
-        applyWidgetVisibility();
+        own(kind, tile);
+        // visibility is applied once, at the end of widgets(): five partial passes per build was
+        // the same work done five times, each on a half-built grid
         return tile;
+    }
+
+    /** Register a view that belongs to the same widget as the tile, like the calculator's pad. */
+    private void own(String kind, View view) {
+        java.util.ArrayList<View> views = widgetViews.get(kind);
+        if (views == null) {
+            views = new java.util.ArrayList<>();
+            widgetViews.put(kind, views);
+        }
+        if (!views.contains(view)) {
+            views.add(view);
+        }
     }
 
     private void persistWidgets() {
@@ -713,26 +746,40 @@ final class SlothBoard {
 
     /** A widget the chooser has switched off is gone; the drawer rebuilds around it. */
     void applyWidgetVisibility() {
-        for (java.util.Map.Entry<String, LinearLayout> entry : widgetTiles.entrySet()) {
-            String kind = entry.getKey();
-            boolean hidden = hiddenWidgets.contains(kind);
-            entry.getValue().setVisibility(hidden ? View.GONE : View.VISIBLE);
+        for (java.util.Map.Entry<String, java.util.ArrayList<View>> entry : widgetViews.entrySet()) {
+            boolean hidden = hiddenWidgets.contains(entry.getKey());
+            for (View view : entry.getValue()) {
+                // the tile may also be switched off by its own detail toggling, so only the
+                // hidden case is forced here and only the tile is restored
+                if (hidden) {
+                    view.setVisibility(View.GONE);
+                    hiddenByUs.add(view);
+                } else if (view == widgetTiles.get(entry.getKey()) || hiddenByUs.remove(view)) {
+                    // the tile always comes back; anything else only if this class hid it, so a
+                    // pad the person closed stays closed
+                    view.setVisibility(View.VISIBLE);
+                }
+            }
         }
     }
 
     private LinearLayout row() {
         LinearLayout row = new LinearLayout(activity);
         row.setOrientation(LinearLayout.HORIZONTAL);
+        // height 0 with a weight only works when the parent has an exact height. This row sits
+        // in a wrap-content column, so the weight bought nothing and the row measured zero tall -
+        // the tiles were laid out inside a zero-height box
         LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f);
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
         lp.bottomMargin = dp(8);
         row.setLayoutParams(lp);
         return row;
     }
 
     private LinearLayout.LayoutParams weight() {
+        // width is shared; height must be the tile's own, because the row it sits in wraps
         LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(0,
-                ViewGroup.LayoutParams.MATCH_PARENT, 1f);
+                ViewGroup.LayoutParams.WRAP_CONTENT, 1f);
         lp.rightMargin = dp(8);
         return lp;
     }
@@ -758,15 +805,16 @@ final class SlothBoard {
         top.addView(text("\u203A", 15f, DIM, false));
         tile.addView(top);
 
+        // the tile wraps its content, so a weighted body has no height to share and measures zero
         tile.addView(body, new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f));
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
         return tile;
     }
 
     private View wide(String name, View body) {
         LinearLayout tile = (LinearLayout) card(name, body);
         LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f);
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
         lp.bottomMargin = dp(8);
         tile.setLayoutParams(lp);
         return tile;
@@ -849,8 +897,9 @@ final class SlothBoard {
             public void afterTextChanged(android.text.Editable s) {
             }
         });
+        note.setMinHeight(dp(76));
         body.addView(note, new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f));
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
 
         LinearLayout meta = new LinearLayout(activity);
         meta.setOrientation(LinearLayout.HORIZONTAL);

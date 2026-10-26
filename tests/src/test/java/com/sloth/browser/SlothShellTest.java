@@ -675,6 +675,62 @@ public class SlothShellTest {
                 SlothSettings.defaultNumberFor("autoLockMin"));
     }
 
+    /** Nothing in the widget grid may measure itself zero tall. */
+    @Test
+    public void theWidgetRowsHaveAHeightOfTheirOwn() throws Exception {
+        TestActivity activity = build();
+        SlothShell.own(activity);
+        settle();
+        View grid = findByViewTag(drawerOf(activity), "widget-grid");
+        assertNotNull("a widget grid", grid);
+        ViewGroup rows = (ViewGroup) grid;
+        int checked = 0;
+        for (int i = 0; i < rows.getChildCount(); i++) {
+            View child = rows.getChildAt(i);
+            android.view.ViewGroup.LayoutParams lp = child.getLayoutParams();
+            if (lp == null) {
+                continue;
+            }
+            if (lp instanceof LinearLayout.LayoutParams && ((LinearLayout.LayoutParams) lp).weight > 0) {
+                org.junit.Assert.fail("a row weighted inside a wrap-content column: child " + i);
+            }
+            assertFalse("child " + i + " asks for height 0", lp.height == 0);
+            if (child instanceof ViewGroup) {
+                ViewGroup inner = (ViewGroup) child;
+                for (int j = 0; j < inner.getChildCount(); j++) {
+                    android.view.ViewGroup.LayoutParams ilp = inner.getChildAt(j).getLayoutParams();
+                    if (ilp instanceof LinearLayout.LayoutParams
+                            && ((LinearLayout.LayoutParams) ilp).weight > 0) {
+                        assertEquals("a weighted tile must measure its own height inside a "
+                                + "wrap-content row: child " + i + "/" + j,
+                                ViewGroup.LayoutParams.WRAP_CONTENT, ilp.height);
+                        checked++;
+                    }
+                }
+            }
+        }
+        assertTrue("the grid has weighted tiles to check", checked > 0);
+    }
+
+    /** Switching the calculator off takes its keypad with it, and leaving it off leaves it off. */
+    @Test
+    public void hidingTheCalculatorHidesItsKeypad() throws Exception {
+        TestActivity activity = build();
+        SlothShell.own(activity);
+        settle();
+        View pad = findByViewTag(drawerOf(activity), "calc-pad");
+        assertNotNull("a keypad", pad);
+        SlothBoard board = SlothShell.boardForTest();
+        assertNotNull("a board", board);
+        board.toggleWidget("calc");
+        settle();
+        assertEquals("the keypad outlived its card", View.GONE, pad.getVisibility());
+        board.toggleWidget("calc");
+        settle();
+        assertEquals("the keypad did not come back with its card", View.VISIBLE,
+                pad.getVisibility());
+    }
+
     private View findByViewTag(View v, String tag) {
         if (tag.equals(v.getTag())) {
             return v;
@@ -1033,7 +1089,7 @@ public class SlothShellTest {
             // a closed drawer's buttons are still the buttons we mean; only prefer shown ones
             collectChips(root, label, matches, false);
         }
-        assertFalse(label, matches.isEmpty());
+        assertFalse(label + " in DRAWER[" + dumpText(root) + "] CHOOSER=" + SlothShell.sheetStateForTest(), matches.isEmpty());
         View target = null;
         for (View found : matches) {
             View walk = found;

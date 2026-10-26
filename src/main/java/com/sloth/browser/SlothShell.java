@@ -1947,6 +1947,20 @@ public final class SlothShell {
         return false;
     }
 
+    /** The widget chooser's state, for the harness. */
+    static String sheetStateForTest() {
+        return widgetSheet == null ? "null"
+                : (widgetSheet.getVisibility() == View.VISIBLE ? "visible" : "gone")
+                + " attached=" + (widgetSheet.getParent() != null)
+                + " h=" + (widgetSheet.getParent() instanceof View
+                ? ((View) widgetSheet.getParent()).getHeight() : -1);
+    }
+
+    /** The dashboard, for the harness. */
+    static SlothBoard boardForTest() {
+        return board;
+    }
+
     /** The refresh the 800ms tick runs, for the harness. */
     static void refreshForTest(Activity activity) {
         refresh(activity);
