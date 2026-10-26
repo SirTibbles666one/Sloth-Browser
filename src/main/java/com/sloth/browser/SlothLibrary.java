@@ -30,15 +30,21 @@ final class SlothLibrary {
     }
 
     /**
-     * One instance per page, keyed by the page itself.
+     * The page carries its own instance.
      *
-     * <p>A single static held the last page built, so a second window opened the library into
-     * the first window's page and brought an empty one to the front: a blank dark screen with
-     * the browser bar over it. The page is in the tree it was built into; the lookup has to be
-     * too.</p>
+     * <p>A single static held the last page built, so a second window filled the first window's
+     * page and brought an empty one to the front. A static map keyed by the page fixed that and
+     * leaked instead: the value holds the page's own children, so the key could never be
+     * collected and every rebuild kept a whole window alive. The page is the only thing that
+     * needs to know its library, so it holds it.</p>
      */
-    private static final java.util.Map<View, SlothLibrary> BY_PAGE =
-            new java.util.WeakHashMap<>();
+    static final class Page extends FrameLayout {
+        SlothLibrary library;
+
+        Page(Activity activity) {
+            super(activity);
+        }
+    }
 
     private final Activity activity;
     private final Sink sink;
@@ -59,7 +65,7 @@ final class SlothLibrary {
     }
 
     static View build(final Activity activity, final Sink sink, final Runnable onClose) {
-        FrameLayout page = new FrameLayout(activity);
+        Page page = new Page(activity);
         page.setTag("library-page");
         page.setBackgroundColor(SlothTheme.bg());
 
@@ -125,17 +131,16 @@ final class SlothLibrary {
         page.addView(column, new FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
         holder[0] = new SlothLibrary(activity, sink, title, note, list, save);
-        BY_PAGE.put(page, holder[0]);
+        page.library = holder[0];
         return page;
     }
 
     /** Fill one page for one kind and say whether that page can be shown at all. */
     static boolean show(View page, String kind) {
-        SlothLibrary library = page == null ? null : BY_PAGE.get(page);
-        if (library == null) {
+        if (!(page instanceof Page) || ((Page) page).library == null) {
             return false;
         }
-        library.fill(kind);
+        ((Page) page).library.fill(kind);
         return true;
     }
 
@@ -258,9 +263,26 @@ final class SlothLibrary {
         }
     }
 
+    /**
+     * A name for a saved page: the app's title if it exposes one, else the host.
+     *
+     * <p>Falling back to the whole URL put "https://example.com/a/very/long/path?with=query" in a
+     * bookmark title; the host is what a person recognises in a list.</p>
+     */
     private String titleFor(String url) {
         String shown = SlothShell.currentTitle(activity);
-        return shown == null || shown.trim().length() == 0 ? url : shown.trim();
+        if (shown != null && shown.trim().length() > 0) {
+            return shown.trim();
+        }
+        try {
+            String host = android.net.Uri.parse(url).getHost();
+            if (host != null && host.length() > 0) {
+                return host.startsWith("www.") ? host.substring(4) : host;
+            }
+        } catch (Throwable ignored) {
+            // a URL this build cannot parse is still saved under itself
+        }
+        return url;
     }
 
     /** "3 hours ago" for a timestamp in milliseconds; empty for a timestamp that is not one. */
