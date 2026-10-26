@@ -487,6 +487,11 @@ final class SlothBoard {
         title.setGravity(Gravity.CENTER);
         title.setSingleLine(true);
         title.setEllipsize(TextUtils.TruncateAt.END);
+        // five cells at 411 dp leave about 60 dp of label each, and "Downloads" at 12 sp bold
+        // needs more: it was rendering as "Downl...". The label shrinks to fit rather than
+        // being cut, so the row never shows a truncated word
+        title.setAutoSizeTextTypeUniformWithConfiguration(8, 12, 1,
+                android.util.TypedValue.COMPLEX_UNIT_SP);
         LinearLayout.LayoutParams tlp = new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
         tlp.topMargin = dp(8);

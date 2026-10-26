@@ -101,7 +101,7 @@ public class SlothBar extends LinearLayout {
                     moved = true;
                 }
                 // vertical, deliberate, and not a sideways swipe across the address
-                if (Math.abs(dy) > slop && Math.abs(dy) > dx * 1.08f) {
+                if (Math.abs(dy) > slop && Math.abs(dy) > dx * 1.05f) {
                     dragging = true;
                     // the sheet takes up the travel that happened before the claim, then
                     // measures from here: it sits under the finger, and it does not leap
@@ -139,7 +139,7 @@ public class SlothBar extends LinearLayout {
                 if (Math.abs(dy) > slop || dx > slop) {
                     moved = true;
                 }
-                if (!dragging && Math.abs(dy) > slop && Math.abs(dy) > dx * 1.08f) {
+                if (!dragging && Math.abs(dy) > slop && Math.abs(dy) > dx * 1.05f) {
                     dragging = true;
                     listener.onDragStart(e.getY(), dy);
                     downY = e.getY();
