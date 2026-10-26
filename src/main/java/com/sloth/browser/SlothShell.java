@@ -125,6 +125,8 @@ public final class SlothShell {
     private static View libraryPage;
     private static View findBar;
     private static View gripBar;
+    /** Which surface claimed the last drag: bar, strip, content, board or grip. */
+    static String dragSource = "none";
     private static View dock;
     private static View main;
     private static int dockH = -1, dockTop, dockBottom, dockPadL, dockPadR, mainH;
@@ -778,7 +780,7 @@ public final class SlothShell {
                     animateTo(activity, open ? 0 : openHeight(activity));
                 }
             };
-            barWrap.setListener(shellDrag);
+            barWrap.setListener(new SlothLabel(shellDrag, "bar"));
 
             // ----------------------------------------------------------- drawer
             FrameLayout sheet = new FrameLayout(activity);
@@ -805,7 +807,7 @@ public final class SlothShell {
             holder.setPadding(dp(activity, 16), 0, dp(activity, 16), 0);
 
             SlothSheetScroll list = new SlothSheetScroll(activity);
-            list.setListener(shellDrag);
+            list.setListener(new SlothLabel(shellDrag, "content"));
             list.setAtFull(new SlothSheetScroll.AtFull() {
                 @Override
                 public boolean atFull() {
@@ -851,13 +853,13 @@ public final class SlothShell {
             // on the scroll container AND every square inside it: a touch that lands on a
             // tab is delivered to the tab, and the container's own listener never saw the
             // gesture - which is why a vertical drag only worked on the gaps between tabs.
-            stripDrag = new SlothDrag(shellDrag);
+            stripDrag = new SlothDrag(new SlothLabel(shellDrag, "strip"));
             peekScroll.setOnTouchListener(stripDrag);
             holder.addView(peekScroll, new LinearLayout.LayoutParams(
                     ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
 
             scroller.addView(board.view());
-            board.setDragSink(shellDrag);
+            board.setDragSink(new SlothLabel(shellDrag, "board"));
             board.setEditSink(new Runnable() {
                 @Override
                 public void run() {
@@ -980,13 +982,13 @@ public final class SlothShell {
             // the band underneath it belongs to the drag, so a pull started there is the
             // sheet's and a tap on the footer is still the footer's
             foot.setPadding(foot.getPaddingLeft(), foot.getPaddingTop(),
-                    foot.getPaddingRight(), dp(activity, 26));
+                    foot.getPaddingRight(), dp(activity, 30));
             gripBar = new View(activity);
             gripBar.setTag("close-grip");
             gripBar.setContentDescription("Drag to close the drawer");
-            gripBar.setOnTouchListener(new SlothDrag(shellDrag));
+            gripBar.setOnTouchListener(new SlothDrag(new SlothLabel(shellDrag, "grip")));
             FrameLayout.LayoutParams gripLp = new FrameLayout.LayoutParams(
-                    ViewGroup.LayoutParams.MATCH_PARENT, dp(activity, 26));
+                    ViewGroup.LayoutParams.MATCH_PARENT, dp(activity, 30));
             gripLp.gravity = Gravity.BOTTOM;
             sheet.addView(gripBar, gripLp);
             gripBar.setVisibility(View.GONE);
@@ -2121,7 +2123,7 @@ public final class SlothShell {
     /** The last drag as a line of numbers, for the harness and for me. */
     static String dragTraceForTest() {
         return traceFrom + "->" + tracePeak + " moves=" + traceMoves + " v=" + traceVelocity
-                + " seat=" + traceTo + " ms=" + traceMs;
+                + " seat=" + traceTo + " ms=" + traceMs + " by=" + dragSource;
     }
 
     /** How many times the page root has been re-laid-out, for the harness. */

@@ -1139,6 +1139,29 @@ public class SlothShellTest {
                 "Drag to close the drawer", String.valueOf(grip.getContentDescription()));
     }
 
+    /** The trace says which surface took the drag: the first question when it feels wrong. */
+    @Test
+    public void theTraceNamesTheSurface() throws Exception {
+        TestActivity activity = build();
+        SlothShell.own(activity);
+        settle();
+        View bar = findByViewTag(overlayOf(activity), "drag");
+        assertNotNull("the bar as a handle", bar);
+        drag(bar, 600f, 300f);
+        settle();
+        assertTrue("a drag of the bar says so: " + SlothShell.dragTraceForTest(),
+                SlothShell.dragTraceForTest().contains("by=bar"));
+
+        driveHeight(activity, peekHeight(activity) + 300);
+        settle();
+        View grip = findByViewTag(drawerOf(activity), "close-grip");
+        assertEquals("the band is showing", View.VISIBLE, grip.getVisibility());
+        drag(grip, 700f, 400f);
+        settle();
+        assertTrue("a drag of the bottom band says so: " + SlothShell.dragTraceForTest(),
+                SlothShell.dragTraceForTest().contains("by=grip"));
+    }
+
     private View findByViewTag(View v, String tag) {
         if (tag.equals(v.getTag())) {
             return v;
