@@ -1001,6 +1001,38 @@ public class SlothShellTest {
                 SlothShell.lastSeatForTest());
     }
 
+    /** Find opens over the page, and BACK closes it before anything else. */
+    @Test
+    public void findOpensAndBackClosesIt() throws Exception {
+        TestActivity activity = build();
+        SlothShell.own(activity);
+        settle();
+        SlothShell.openFind(activity);
+        settle();
+        View bar = findByViewTag(overlayOf(activity), "find-bar");
+        assertNotNull("a find bar", bar);
+        assertEquals("it is showing", View.VISIBLE, bar.getVisibility());
+        assertTrue("back closed a layer", SlothShell.backOneLayer(activity));
+        assertEquals("and it was the find bar", View.GONE, bar.getVisibility());
+    }
+
+    /** Typing with no engine behind the window says so rather than pretending to search. */
+    @Test
+    public void findSaysWhenTheEngineIsNotThere() throws Exception {
+        TestActivity activity = build();
+        SlothShell.own(activity);
+        settle();
+        SlothShell.openFind(activity);
+        settle();
+        View bar = findByViewTag(overlayOf(activity), "find-bar");
+        ViewGroup row = (ViewGroup) ((ViewGroup) bar).getChildAt(0);
+        EditText field = (EditText) row.getChildAt(0);
+        field.setText("sloth");
+        settle();
+        assertEquals("the count says the finder is unavailable", "unavailable",
+                String.valueOf(((TextView) row.getChildAt(1)).getText()));
+    }
+
     private View findByViewTag(View v, String tag) {
         if (tag.equals(v.getTag())) {
             return v;

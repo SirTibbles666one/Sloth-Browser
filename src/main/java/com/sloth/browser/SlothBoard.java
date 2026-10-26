@@ -448,6 +448,7 @@ final class SlothBoard {
         row.addView(action(SlothIcons.Kind.BOOKMARK, "Bookmarks", "panel:bookmarks", false));
         row.addView(action(SlothIcons.Kind.CLOCK, "History", "panel:history", false));
         row.addView(action(SlothIcons.Kind.DOWNLOAD, "Downloads", "panel:downloads", false));
+        row.addView(action(SlothIcons.Kind.SEARCH, "Find", "find", false));
         return row;
     }
 
@@ -1320,6 +1321,10 @@ final class SlothBoard {
     }
 
     private void tap(String bindingName) {
+        if ("find".equals(bindingName)) {
+            SlothShell.openFind(activity);
+            return;
+        }
         if (bindingName != null && bindingName.startsWith("panel:")) {
             String kind = bindingName.substring(6);
             if ("bookmarks".equals(kind) || "history".equals(kind)

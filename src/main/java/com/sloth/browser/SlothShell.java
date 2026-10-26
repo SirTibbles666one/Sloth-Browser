@@ -123,6 +123,7 @@ public final class SlothShell {
     /** True while the app's own settings screen owns the panel. */
     private static boolean settingsOpen;
     private static View libraryPage;
+    private static View findBar;
     private static View dock;
     private static View main;
     private static int dockH = -1, dockTop, dockBottom, dockPadL, dockPadR, mainH;
@@ -505,6 +506,7 @@ public final class SlothShell {
         openIntent = false;
         settingsOpen = false;
         libraryPage = null;
+        findBar = null;
         // the next window's first drag must be able to tick: a seat remembered from a window
         // that is gone would silence the very first settle of the new one
         lastSeat = -1;
@@ -943,6 +945,18 @@ public final class SlothShell {
             root.addView(libraryPage, new FrameLayout.LayoutParams(
                     ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
             libraryPage.setVisibility(View.GONE);
+            findBar = SlothFind.build(activity, new Runnable() {
+                @Override
+                public void run() {
+                    closeFind(activity);
+                }
+            });
+            FrameLayout.LayoutParams findLp = new FrameLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+            // under the bar, not over it: the address stays readable while a search is open
+            findLp.topMargin = dp(activity, 64) + statusInset;
+            root.addView(findBar, findLp);
+            findBar.setVisibility(View.GONE);
             diagPage = SlothDiag.page(activity);
             root.addView(diagPage, new FrameLayout.LayoutParams(
                     ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
@@ -2006,6 +2020,11 @@ public final class SlothShell {
             SlothLog.note("back closed diagnostics");
             return true;
         }
+        if (findBar != null && findBar.getContext() == activity
+                && findBar.getVisibility() == View.VISIBLE) {
+            closeFind(activity);
+            return true;
+        }
         if (libraryPage != null && libraryPage.getContext() == activity
                 && libraryPage.getVisibility() == View.VISIBLE) {
             libraryPage.setVisibility(View.GONE);
@@ -2261,6 +2280,45 @@ public final class SlothShell {
         page.bringToFront();
         page.setVisibility(View.VISIBLE);
         checkLayers("opened settings");
+    }
+
+    /** Open find in page, over the top of the page and under the bar. */
+    static void openFind(Activity activity) {
+        if (findBar == null || findBar.getContext() != activity) {
+            SlothLog.note("no find bar in this window");
+            return;
+        }
+        closeDrawerFor(activity);
+        findBar.bringToFront();
+        findBar.setVisibility(View.VISIBLE);
+        View field = findBar.findFocus() == null ? null : findBar.findFocus();
+        View input = field;
+        if (input == null) {
+            input = ((ViewGroup) findBar).getChildAt(0) instanceof ViewGroup
+                    ? ((ViewGroup) ((ViewGroup) findBar).getChildAt(0)).getChildAt(0) : null;
+        }
+        if (input != null) {
+            input.requestFocus();
+            Object ime = activity.getSystemService(android.content.Context.INPUT_METHOD_SERVICE);
+            if (ime instanceof InputMethodManager) {
+                ((InputMethodManager) ime).showSoftInput(input, InputMethodManager.SHOW_IMPLICIT);
+            }
+        }
+        SlothLog.note("find opened");
+    }
+
+    /** Close find and take the highlights with it. */
+    static void closeFind(Activity activity) {
+        if (findBar != null && findBar.getContext() == activity) {
+            findBar.setVisibility(View.GONE);
+            SlothFind.clear(activity);
+            Object ime = activity.getSystemService(android.content.Context.INPUT_METHOD_SERVICE);
+            if (ime instanceof InputMethodManager && activity.getCurrentFocus() != null) {
+                ((InputMethodManager) ime).hideSoftInputFromWindow(
+                        activity.getCurrentFocus().getWindowToken(), 0);
+            }
+            SlothLog.note("find closed");
+        }
     }
 
     /** The address the browser is showing, for the library's save action. */
