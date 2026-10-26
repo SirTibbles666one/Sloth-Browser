@@ -815,6 +815,32 @@ public class SlothShellTest {
         assertFalse("and it is not left holding a stale title: " + text, text.startsWith("Bookmarks"));
     }
 
+    /** A fault is not evicted by a busy minute of notes. */
+    @Test
+    public void aFaultOutlivesTheNotesAroundIt() {
+        SlothLog.clear();
+        SlothLog.error("the cause of the black page");
+        for (int i = 0; i < 300; i++) {
+            SlothLog.note("probe line " + i);
+        }
+        String text = SlothLog.text();
+        assertTrue("the fault survived 300 notes: " + text, text.contains("the cause of the black page"));
+        assertTrue("and it is reported before the noise", text.indexOf("FAULTS") < text.indexOf("RECENT"));
+        assertEquals("the fault is counted with the notes", 121, SlothLog.count());
+        SlothLog.clear();
+    }
+
+    /** Notes alone still read as a plain list, without a FAULTS heading. */
+    @Test
+    public void notesWithoutFaultsHaveNoEmptySection() {
+        SlothLog.clear();
+        SlothLog.note("only a note");
+        String text = SlothLog.text();
+        assertFalse("no empty faults section: " + text, text.contains("FAULTS"));
+        assertTrue(text.contains("only a note"));
+        SlothLog.clear();
+    }
+
     private View findByViewTag(View v, String tag) {
         if (tag.equals(v.getTag())) {
             return v;

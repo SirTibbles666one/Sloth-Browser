@@ -23,9 +23,13 @@ import java.util.Locale;
 final class SlothLog {
 
     private static final int KEEP = 120;
+    /** Faults get their own room, so a chatty minute of notes cannot evict the cause. */
+    private static final int KEEP_FAULTS = 20;
     private static final String STORE = "slothworks";
     private static final String KEY = "problems";
+    private static final String KEY_FAULTS = "faults";
     private static final ArrayDeque<String> LINES = new ArrayDeque<>();
+    private static final ArrayDeque<String> FAULTS = new ArrayDeque<>();
     private static final SimpleDateFormat TIME = new SimpleDateFormat("HH:mm:ss", Locale.US);
 
     private static SharedPreferences store;
@@ -48,19 +52,13 @@ final class SlothLog {
                 return;
             }
             String kept = store.getString(KEY, null);
+            String faults = store.getString(KEY_FAULTS, null);
             loaded = true;
-            if (kept != null && !kept.isEmpty()) {
-                synchronized (LINES) {
-                    LINES.clear();
-                    for (String line : kept.split("\n")) {
-                        if (!line.isEmpty()) {
-                            LINES.addLast(line);
-                        }
-                    }
-                    while (LINES.size() > KEEP) {
-                        LINES.removeFirst();
-                    }
-                }
+            synchronized (LINES) {
+                LINES.clear();
+                FAULTS.clear();
+                fill(LINES, kept, KEEP);
+                fill(FAULTS, faults, KEEP_FAULTS);
             }
         } catch (Throwable ignored) {
             loaded = true;
@@ -93,6 +91,15 @@ final class SlothLog {
         try {
             String line = TIME.format(new Date()) + "  " + prefix + what;
             synchronized (LINES) {
+                // a fault is worth more than any note, so it is kept in a ring of its own: the
+                // 120-line ring below is shared with the probe and the tick, and a busy minute
+                // used to push "CRASH on main: ..." off the top of the report
+                if (durable) {
+                    while (FAULTS.size() >= KEEP_FAULTS) {
+                        FAULTS.removeFirst();
+                    }
+                    FAULTS.addLast(line);
+                }
                 while (LINES.size() >= KEEP) {
                     LINES.removeFirst();
                 }
@@ -112,19 +119,14 @@ final class SlothLog {
         if (store == null) {
             return;
         }
-        StringBuilder out = new StringBuilder();
-        for (String line : LINES) {
-            if (out.length() > 0) {
-                out.append('\n');
-            }
-            out.append(line);
-        }
+        String notes = join(LINES);
+        String faults = join(FAULTS);
         // a fault that ends the session is what this log is for, and an asynchronous write
         // can be lost with the process that queued it - so errors commit, notes do not
         if (durable) {
-            store.edit().putString(KEY, out.toString()).commit();
+            store.edit().putString(KEY, notes).putString(KEY_FAULTS, faults).commit();
         } else {
-            store.edit().putString(KEY, out.toString()).apply();
+            store.edit().putString(KEY, notes).putString(KEY_FAULTS, faults).apply();
         }
     }
 
@@ -191,30 +193,75 @@ final class SlothLog {
         }
     }
 
+    /** Everything kept: faults and notes together, because both are lines a report shows. */
     static int count() {
         synchronized (LINES) {
-            return LINES.size();
+            return LINES.size() + FAULTS.size();
         }
     }
 
+    /** Faults first, then the running notes: the reason before the circumstances. */
     static String text() {
-        StringBuilder out = new StringBuilder();
+        String faults;
+        String notes;
         synchronized (LINES) {
-            for (String line : LINES) {
-                if (out.length() > 0) {
-                    out.append('\n');
-                }
-                out.append(line);
-            }
+            faults = join(FAULTS);
+            notes = join(LINES);
         }
-        return out.length() == 0
-                ? "Nothing has gone wrong since the app was installed."
-                : out.toString();
+        if (faults.length() == 0 && notes.length() == 0) {
+            return "Nothing has gone wrong since the app was installed.";
+        }
+        StringBuilder out = new StringBuilder();
+        if (faults.length() > 0) {
+            out.append("FAULTS\n").append(faults);
+        }
+        if (notes.length() > 0) {
+            if (out.length() > 0) {
+                out.append('\n');
+            }
+            out.append("RECENT\n").append(notes);
+        }
+        return out.toString();
+    }
+
+    /** The faults alone, for a report that only wants the reasons. */
+    static String faults() {
+        synchronized (LINES) {
+            return join(FAULTS);
+        }
+    }
+
+    /** Restore one ring, ignoring the section headings a saved report carries. */
+    private static void fill(ArrayDeque<String> ring, String stored, int keep) {
+        if (stored == null || stored.isEmpty()) {
+            return;
+        }
+        for (String line : stored.split("\n")) {
+            if (line.isEmpty() || "FAULTS".equals(line) || "RECENT".equals(line)) {
+                continue;
+            }
+            ring.addLast(line);
+        }
+        while (ring.size() > keep) {
+            ring.removeFirst();
+        }
+    }
+
+    private static String join(java.util.Collection<String> lines) {
+        StringBuilder out = new StringBuilder();
+        for (String line : lines) {
+            if (out.length() > 0) {
+                out.append('\n');
+            }
+            out.append(line);
+        }
+        return out.toString();
     }
 
     static void clear() {
         synchronized (LINES) {
             LINES.clear();
+            FAULTS.clear();
             persistLocked();
         }
     }
