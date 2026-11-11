@@ -1000,6 +1000,13 @@ public final class SlothShell {
             markLp.gravity = Gravity.CENTER;
             gripWell.addView(gripMark, markLp);
             gripBar = gripWell;
+            // SlothDrag returns false for the down so a tap on a tab square still clicks.
+            // This view is not a square. Unless it accepts the down itself, the sheet's
+            // hit test falls through the band and the drag never starts - dispatching
+            // the gesture straight at the handle hides that, which is how 1251 shipped
+            // a band that was on top and still could not be touched
+            gripBar.setClickable(true);
+            gripBar.setFocusable(true);
             gripBar.setOnTouchListener(new SlothDrag(new SlothLabel(shellDrag, "grip")));
             final FrameLayout.LayoutParams gripLp = new FrameLayout.LayoutParams(
                     ViewGroup.LayoutParams.MATCH_PARENT, dp(activity, 30));

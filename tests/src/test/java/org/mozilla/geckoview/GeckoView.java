@@ -11,7 +11,18 @@ import android.view.View;
  */
 public class GeckoView extends View {
 
+    private Object session;
+
     public GeckoView(Context context) {
         super(context);
+    }
+
+    /** The shell asks the page for its session by this name. Null until a test sets one. */
+    public Object getSession() {
+        return session;
+    }
+
+    public void setSession(Object session) {
+        this.session = session;
     }
 }

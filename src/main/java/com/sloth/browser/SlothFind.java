@@ -164,7 +164,12 @@ final class SlothFind {
             Object result = finder.getClass()
                     .getMethod("find", String.class, int.class)
                     .invoke(finder, text, flags);
-            accept(result);
+            SlothResult.listen(result, new SlothResult.Value() {
+                @Override
+                public void onValue(Object found) {
+                    report(found);
+                }
+            });
         } catch (Throwable t) {
             SlothLog.note("find unavailable: " + t.getClass().getSimpleName());
             count.setText("unavailable");
@@ -182,21 +187,6 @@ final class SlothFind {
     }
 
     /** The finder's answer: total matches and which one is highlighted. */
-    private void accept(Object result) throws Exception {
-        final Class<?> listener = Class.forName("org.mozilla.geckoview.GeckoResult$OnValueListener");
-        Object proxy = java.lang.reflect.Proxy.newProxyInstance(listener.getClassLoader(),
-                new Class<?>[]{listener}, new java.lang.reflect.InvocationHandler() {
-                    @Override
-                    public Object invoke(Object p, java.lang.reflect.Method m, Object[] a) {
-                        if ("onValue".equals(m.getName()) && a != null && a.length >= 3) {
-                            report(a[a.length - 1]);
-                        }
-                        return null;
-                    }
-                });
-        result.getClass().getMethod("accept", listener).invoke(result, proxy);
-    }
-
     private void report(Object found) {
         try {
             int total = field(found, "total");

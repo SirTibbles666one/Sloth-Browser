@@ -183,7 +183,7 @@ final class SlothLibrary {
             }
             Object storage = call(runtime, "getStorageController");
             Object store = call(storage, "bookmarks".equals(kind) ? "getBookmarks" : "getHistory");
-            accept(listOn(store));
+            await(listOn(store));
             return true;
         } catch (Throwable engineWhy) {
             if (list instanceof java.lang.Iterable) {
@@ -391,20 +391,13 @@ final class SlothLibrary {
     }
 
     /** GeckoResult completes on the main thread; fill when it does, and notice when it does not. */
-    private void accept(Object result) throws Exception {
-        final Class<?> listener = Class.forName("org.mozilla.geckoview.GeckoResult$OnValueListener");
-        Object proxy = java.lang.reflect.Proxy.newProxyInstance(listener.getClassLoader(),
-                new Class<?>[]{listener}, new java.lang.reflect.InvocationHandler() {
-                    @Override
-                    public Object invoke(Object p, java.lang.reflect.Method m, Object[] a) {
-                        if ("onValue".equals(m.getName()) && a != null && a.length >= 3) {
-                            Object value = a[a.length - 1];
-                            render(value);
-                        }
-                        return null;
-                    }
-                });
-        result.getClass().getMethod("accept", listener).invoke(result, proxy);
+    private void await(Object result) throws Exception {
+        SlothResult.listen(result, new SlothResult.Value() {
+            @Override
+            public void onValue(Object value) {
+                render(value);
+            }
+        });
 
         final String asked = kind;
         new android.os.Handler(android.os.Looper.getMainLooper()).postDelayed(new Runnable() {

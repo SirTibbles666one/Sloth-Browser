@@ -43,6 +43,13 @@ public class SlothBar extends LinearLayout {
         boolean onSwipe(float dx);
     }
 
+    /**
+     * How much more vertical than sideways a drag must be before the shell claims it.
+     * The bar, the content and the strip all use this: two ratios for one gesture is
+     * why the bar used to feel heavier than the sheet.
+     */
+    static final float CLAIM_RATIO = 1.05f;
+
     private final int slop;
     private Listener listener;
     private float downX, downY, lastY;
@@ -101,13 +108,17 @@ public class SlothBar extends LinearLayout {
                     moved = true;
                 }
                 // vertical, deliberate, and not a sideways swipe across the address
-                if (Math.abs(dy) > slop && Math.abs(dy) > dx * 1.05f) {
+                if (Math.abs(dy) > slop && Math.abs(dy) > dx * CLAIM_RATIO) {
                     dragging = true;
                     // the sheet takes up the travel that happened before the claim, then
                     // measures from here: it sits under the finger, and it does not leap
                     float carry = dy;
                     downY = e.getY();
                     lastY = e.getY();
+                    // the claiming move is not delivered here again: speed is measured from
+                    // this instant, or a one-sample flick is diluted by the time spent
+                    // crossing the slop and never counts as a flick
+                    lastT = e.getEventTime();
                     listener.onDragStart(downY, carry);
                     return true;
                 }
@@ -139,7 +150,7 @@ public class SlothBar extends LinearLayout {
                 if (Math.abs(dy) > slop || dx > slop) {
                     moved = true;
                 }
-                if (!dragging && Math.abs(dy) > slop && Math.abs(dy) > dx * 1.05f) {
+                if (!dragging && Math.abs(dy) > slop && Math.abs(dy) > dx * CLAIM_RATIO) {
                     dragging = true;
                     listener.onDragStart(e.getY(), dy);
                     downY = e.getY();

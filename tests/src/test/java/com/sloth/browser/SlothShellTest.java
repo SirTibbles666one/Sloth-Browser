@@ -248,7 +248,7 @@ public class SlothShellTest {
         TestActivity activity = build();
         final int[] releases = {0};
         final int[] claimed = {0};
-        SlothSheetScroll list = new SlothSheetScroll(activity);
+        SlothSheetScroll list = new ScriptedList(activity);
         list.setListener(new SlothBar.Listener() {
             @Override
             public void onDragStart(float y, float carry) {
@@ -274,16 +274,126 @@ public class SlothShellTest {
             }
         });
 
-        // a scroll that never goes near the top: down, then a fast finger lift
+        // at the full seat, with content still available both ways, a finger moving up the
+        // page is a scroll. It used to be reported as a release of the sheet. The harness
+        // does not lay a ScrollView out tall enough to scroll, so the answers are scripted:
+        // they are exactly what onTouchEvent asks canScrollVertically
+        list.setAtFull(new SlothSheetScroll.AtFull() {
+            @Override
+            public boolean atFull() {
+                return true;
+            }
+        });
+        ((ScriptedList) list).canUp = true;
+        ((ScriptedList) list).canDown = true;
+
         long t = SystemClock.uptimeMillis();
         list.onTouchEvent(MotionEvent.obtain(t, t, MotionEvent.ACTION_DOWN, 200f, 400f, 0));
-        list.onTouchEvent(MotionEvent.obtain(t, t + 20, MotionEvent.ACTION_MOVE, 200f, 430f, 0));
-        list.onTouchEvent(MotionEvent.obtain(t, t + 40, MotionEvent.ACTION_MOVE, 200f, 470f, 0));
-        list.onTouchEvent(MotionEvent.obtain(t, t + 60, MotionEvent.ACTION_UP, 200f, 600f, 0));
+        list.onTouchEvent(MotionEvent.obtain(t, t + 20, MotionEvent.ACTION_MOVE, 200f, 300f, 0));
+        list.onTouchEvent(MotionEvent.obtain(t, t + 40, MotionEvent.ACTION_MOVE, 200f, 200f, 0));
+        list.onTouchEvent(MotionEvent.obtain(t, t + 60, MotionEvent.ACTION_UP, 200f, 80f, 0));
 
         assertEquals("a scroll is not a drag of the drawer", 0, claimed[0]);
         assertEquals("and it must not report a release either: that settled the sheet "
                 + "from a finger that never touched it", 0, releases[0]);
+    }
+
+    /**
+     * At the top of a full sheet, pushing the list up still scrolls it when there is content
+     * below. The touch path used to claim every upward drag at scroll 0, so the first scroll
+     * closed the drawer.
+     */
+    @Test
+    public void scrollingDownFromTheTopDoesNotCloseTheSheet() {
+        TestActivity activity = build();
+        final int[] claimed = {0};
+        ScriptedList list = new ScriptedList(activity);
+        list.setAtFull(new SlothSheetScroll.AtFull() {
+            @Override
+            public boolean atFull() {
+                return true;
+            }
+        });
+        // at the top, with content still below: pulling the finger up scrolls the list
+        list.canUp = false;
+        list.canDown = true;
+        list.setListener(countingListener(claimed));
+        assertTrue("there is content to scroll to", list.canScrollVertically(1));
+
+        long t = SystemClock.uptimeMillis();
+        list.onTouchEvent(MotionEvent.obtain(t, t, MotionEvent.ACTION_DOWN, 200f, 300f, 0));
+        list.onTouchEvent(MotionEvent.obtain(t, t + 20, MotionEvent.ACTION_MOVE, 200f, 180f, 0));
+        list.onTouchEvent(MotionEvent.obtain(t, t + 40, MotionEvent.ACTION_UP, 200f, 80f, 0));
+
+        assertEquals("the list keeps an upward drag while it can still scroll that way",
+                0, claimed[0]);
+    }
+
+    /** Below the full seat the scroller itself, not only its children, hands both directions over. */
+    @Test
+    public void theScrollerFollowsTheFingerBothWaysBelowFull() {
+        TestActivity activity = build();
+        final int[] claimed = {0};
+        SlothSheetScroll list = new SlothSheetScroll(activity);
+        list.setAtFull(new SlothSheetScroll.AtFull() {
+            @Override
+            public boolean atFull() {
+                return false;
+            }
+        });
+        list.setListener(countingListener(claimed));
+
+        long t = SystemClock.uptimeMillis();
+        list.onTouchEvent(MotionEvent.obtain(t, t, MotionEvent.ACTION_DOWN, 200f, 200f, 0));
+        list.onTouchEvent(MotionEvent.obtain(t, t + 20, MotionEvent.ACTION_MOVE, 200f, 320f, 0));
+        assertEquals("a pull down on the content opens the sheet further", 1, claimed[0]);
+        list.onTouchEvent(MotionEvent.obtain(t, t + 40, MotionEvent.ACTION_UP, 200f, 320f, 0));
+
+        claimed[0] = 0;
+        list.onTouchEvent(MotionEvent.obtain(t, t + 80, MotionEvent.ACTION_DOWN, 200f, 200f, 0));
+        list.onTouchEvent(MotionEvent.obtain(t, t + 100, MotionEvent.ACTION_MOVE, 200f, 80f, 0));
+        assertEquals("and a push up closes it", 1, claimed[0]);
+    }
+
+    /** A list whose scroll range is an answer, not a layout the harness cannot produce. */
+    private static final class ScriptedList extends SlothSheetScroll {
+        boolean canUp;
+        boolean canDown;
+
+        ScriptedList(android.content.Context context) {
+            super(context);
+        }
+
+        @Override
+        public boolean canScrollVertically(int direction) {
+            return direction < 0 ? canUp : canDown;
+        }
+    }
+
+    private SlothBar.Listener countingListener(final int[] claimed) {
+        return new SlothBar.Listener() {
+            @Override
+            public void onDragStart(float y, float carry) {
+                claimed[0]++;
+            }
+
+            @Override
+            public void onDrag(float dy) {
+            }
+
+            @Override
+            public void onRelease(float velocity) {
+            }
+
+            @Override
+            public void onTap() {
+            }
+
+            @Override
+            public boolean onSwipe(float dx) {
+                return false;
+            }
+        };
     }
 
     /** The strip's drag has to work from a tab square, not only from the gaps. */
@@ -1060,6 +1170,53 @@ public class SlothShellTest {
         assertEquals("backwards is bit 0 set", 1, SlothFind.BACKWARDS);
     }
 
+    /** The engine's count arrives. accept(OnValueListener) is not a method, so this used to say unavailable. */
+    @Test
+    public void findShowsTheEnginesOwnCount() throws Exception {
+        TestActivity activity = build();
+        org.mozilla.geckoview.GeckoView page = new org.mozilla.geckoview.GeckoView(activity);
+        org.mozilla.geckoview.GeckoSession session = new org.mozilla.geckoview.GeckoSession();
+        page.setSession(session);
+        // inside the app's own root, so the shell is still the second child of the window
+        ViewGroup window = activity.findViewById(android.R.id.content);
+        ((ViewGroup) window.getChildAt(0)).addView(page);
+        SlothShell.own(activity);
+        settle();
+        SlothShell.openFind(activity);
+        settle();
+        View bar = findByViewTag(overlayOf(activity), "find-bar");
+        ViewGroup row = (ViewGroup) ((ViewGroup) bar).getChildAt(0);
+        EditText field = (EditText) row.getChildAt(0);
+        TextView count = (TextView) row.getChildAt(1);
+
+        field.setText("sloth");
+        assertEquals("the finder's own count, not unavailable: " + count.getText(),
+                "3 of 12", String.valueOf(count.getText()));
+        assertEquals("typing searches forward", 0, session.finder.flags);
+
+        field.setText("zzz");
+        assertEquals("no matches", String.valueOf(count.getText()));
+
+        field.setText("sloth");
+        View previous = null;
+        View next = null;
+        for (int i = 0; i < row.getChildCount(); i++) {
+            CharSequence description = row.getChildAt(i).getContentDescription();
+            if (description != null && "Previous match".contentEquals(description)) {
+                previous = row.getChildAt(i);
+            }
+            if (description != null && "Next match".contentEquals(description)) {
+                next = row.getChildAt(i);
+            }
+        }
+        assertNotNull(previous);
+        assertNotNull(next);
+        previous.performClick();
+        assertEquals("previous asks for backwards", SlothFind.BACKWARDS, session.finder.flags);
+        next.performClick();
+        assertEquals("next asks for forward", SlothFind.FORWARD, session.finder.flags);
+    }
+
     /** Who owns a swipe on the content: the panel below full, the list at full. */
     @Test
     public void theSwipeOwnershipRule() {
@@ -1177,6 +1334,128 @@ public class SlothShellTest {
         settle();
         assertTrue("a drag of the bottom band says so: " + SlothShell.dragTraceForTest(),
                 SlothShell.dragTraceForTest().contains("by=grip"));
+    }
+
+    /**
+     * The band has to win hit testing. Dispatching the gesture at the handle skips that,
+     * which is how a band drawn under the content, and then a band that refused the down,
+     * both passed a test while being unreachable on the phone.
+     */
+    @Test
+    public void theBottomBandReceivesATouchFromTheSheet() throws Exception {
+        TestActivity activity = build();
+        SlothShell.own(activity);
+        settle();
+        driveHeight(activity, peekHeight(activity) + 400);
+        settle();
+        View grip = findByViewTag(drawerOf(activity), "close-grip");
+        assertEquals("the band is showing", View.VISIBLE, grip.getVisibility());
+        ViewGroup sheet = (ViewGroup) drawerOf(activity);
+        int width = 480;
+        int height = 900;
+        sheet.measure(View.MeasureSpec.makeMeasureSpec(width, View.MeasureSpec.EXACTLY),
+                View.MeasureSpec.makeMeasureSpec(height, View.MeasureSpec.EXACTLY));
+        sheet.layout(0, 0, width, height);
+        assertTrue("the band has a box: " + grip.getWidth() + "x" + grip.getHeight()
+                        + " at " + grip.getLeft() + "," + grip.getTop(),
+                grip.getWidth() > 0 && grip.getHeight() > 0);
+
+        float x = grip.getLeft() + grip.getWidth() / 2f;
+        float y = grip.getTop() + grip.getHeight() / 2f;
+        long t = SystemClock.uptimeMillis();
+        boolean taken = sheet.dispatchTouchEvent(
+                MotionEvent.obtain(t, t, MotionEvent.ACTION_DOWN, x, y, 0));
+        sheet.dispatchTouchEvent(MotionEvent.obtain(t, t + 30, MotionEvent.ACTION_MOVE, x, y - 90f, 0));
+        settle();
+        assertTrue("a touch on the band is the band's, not the content under it. taken="
+                        + taken + " trace=" + SlothShell.dragTraceForTest(),
+                SlothShell.dragTraceForTest().contains("by=grip"));
+    }
+
+    /** The strip and the grip claim a drag at the same ratio as the bar, not the old 8%. */
+    @Test
+    public void theStripClaimsAtTheSameRatioAsTheBar() {
+        TestActivity activity = build();
+        final boolean[] started = {false};
+        SlothDrag drag = new SlothDrag(new SlothBar.Listener() {
+            @Override
+            public void onDragStart(float y, float carry) {
+                started[0] = true;
+            }
+
+            @Override
+            public void onDrag(float dy) {
+            }
+
+            @Override
+            public void onRelease(float velocity) {
+            }
+
+            @Override
+            public void onTap() {
+            }
+
+            @Override
+            public boolean onSwipe(float dx) {
+                return false;
+            }
+        });
+        View probe = new View(activity);
+        int slop = android.view.ViewConfiguration.get(activity).getScaledTouchSlop();
+        float dx = Math.max(80f, slop * 4f);
+        long t = SystemClock.uptimeMillis();
+        drag.onTouch(probe, MotionEvent.obtain(t, t, MotionEvent.ACTION_DOWN, 0f, 0f, 0));
+        drag.onTouch(probe, MotionEvent.obtain(t, t + 20, MotionEvent.ACTION_MOVE, dx, dx * 1.06f, 0));
+        assertTrue("6% more vertical than sideways is a drag on the bar, so it is one here too",
+                started[0]);
+
+        started[0] = false;
+        drag.onTouch(probe, MotionEvent.obtain(t, t + 40, MotionEvent.ACTION_UP, dx, dx * 1.06f, 0));
+        drag.onTouch(probe, MotionEvent.obtain(t, t + 80, MotionEvent.ACTION_DOWN, 0f, 0f, 0));
+        drag.onTouch(probe, MotionEvent.obtain(t, t + 100, MotionEvent.ACTION_MOVE,
+                dx, dx * 1.02f, 0));
+        assertFalse("2% more vertical is still a sideways flick", started[0]);
+    }
+
+    /** A one-sample flick on a child of the bar is timed from the claim, not from the down. */
+    @Test
+    public void aFlickIsTimedFromTheClaim() {
+        TestActivity activity = build();
+        final float[] velocity = {0f};
+        SlothBar bar = new SlothBar(activity);
+        bar.setListener(new SlothBar.Listener() {
+            @Override
+            public void onDragStart(float y, float carry) {
+            }
+
+            @Override
+            public void onDrag(float dy) {
+            }
+
+            @Override
+            public void onRelease(float v) {
+                velocity[0] = v;
+            }
+
+            @Override
+            public void onTap() {
+            }
+
+            @Override
+            public boolean onSwipe(float dx) {
+                return false;
+            }
+        });
+        long t = 5000L;
+        assertFalse(bar.onInterceptTouchEvent(
+                MotionEvent.obtain(t, t, MotionEvent.ACTION_DOWN, 40f, 100f, 0)));
+        assertTrue("the move clears the slop and is claimed", bar.onInterceptTouchEvent(
+                MotionEvent.obtain(t, t + 20, MotionEvent.ACTION_MOVE, 40f, 300f, 0)));
+        // the claiming move is consumed by interception; the lift arrives as the touch
+        bar.onTouchEvent(MotionEvent.obtain(t, t + 36, MotionEvent.ACTION_UP, 40f, 316f, 0));
+        assertTrue("velocity was " + velocity[0] + ", which is not a flick: the clock still "
+                        + "included the time spent reaching the claim",
+                velocity[0] > SlothSeats.FLICK);
     }
 
     private View findByViewTag(View v, String tag) {
