@@ -24,7 +24,10 @@ import sys
 import zipfile
 from pathlib import Path
 
-CERT_SHA256 = "3d38d9070b9042b879eb96bbafe949e2dabbf8f6fc798bcc8d60149cd0a947af"
+# 1252 rotated the key. The previous certificate (3d38d907...d0a947af) is not
+# available; a build signed with it cannot be produced, and one signed with this
+# key does not install over an older copy. Future builds must match this one.
+CERT_SHA256 = "b29c6c7f60d31209baf24014963a3630a0c087d0e8d81555a98206b3b2becab6"
 # the shell is 14 classes; a scan that finds far fewer is looking in the wrong place
 MIN_SOURCE_CLASSES = 14
 
