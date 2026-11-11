@@ -60,7 +60,7 @@ public class SlothSheetScroll extends ScrollView {
     static boolean ownsTheSwipe(float dy, float dx, int slop, boolean atFull,
             boolean canScrollUp, boolean canScrollDown) {
         float travel = Math.abs(dy);
-        if (travel <= slop || travel <= Math.abs(dx) * 1.05f) {
+        if (travel <= slop || travel <= Math.abs(dx) * SlothBar.CLAIM_RATIO) {
             return false;
         }
         if (!atFull) {
@@ -138,10 +138,19 @@ public class SlothSheetScroll extends ScrollView {
             case MotionEvent.ACTION_MOVE: {
                 float dy = e.getY() - downY;
                 float dx = Math.abs(e.getX() - downX);
-                if (!dragging && getScrollY() <= 0 && dy < -slop && Math.abs(dy) > dx * 1.05f) {
+                // the same rule as interception. This path runs when no child took the
+                // down, which is when ViewGroup never asks onIntercept: a leftover
+                // "upward, and only at the top" claim here closed the sheet while the
+                // list was being scrolled, and refused to open it on the way down
+                if (!dragging && ownsTheSwipe(dy, dx, slop,
+                        atFullForTheSheet == null || atFullForTheSheet.atFull(),
+                        canScrollVertically(-1), canScrollVertically(1))) {
                     dragging = true;
+                    holdTheGesture(true);
                     listener.onDragStart(e.getY(), dy);
                     downY = e.getY();
+                    lastY = e.getY();
+                    lastT = e.getEventTime();
                     dy = 0;
                 }
                 if (dragging) {

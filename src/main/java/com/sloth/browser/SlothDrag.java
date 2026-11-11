@@ -49,7 +49,7 @@ final class SlothDrag implements View.OnTouchListener {
                 float dx = event.getX() - downX;
                 if (!dragging) {
                     int threshold = slop(view);
-                    if (Math.abs(dy) <= threshold || Math.abs(dy) < Math.abs(dx) * 1.08f) {
+                    if (Math.abs(dy) <= threshold || Math.abs(dy) < Math.abs(dx) * SlothBar.CLAIM_RATIO) {
                         return false;
                     }
                     dragging = true;
