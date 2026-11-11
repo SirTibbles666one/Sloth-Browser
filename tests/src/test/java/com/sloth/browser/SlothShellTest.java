@@ -1171,6 +1171,12 @@ public class SlothShellTest {
         }
         assertTrue("a previous button: " + labels, labels.contains("Previous match"));
         assertTrue("a next button: " + labels, labels.contains("Next match"));
+        assertEquals(SlothIcons.Kind.BACK,
+                ((SlothIcons) findTagged(bar, "Previous match")).kind());
+        assertEquals(SlothIcons.Kind.FORWARD,
+                ((SlothIcons) findTagged(bar, "Next match")).kind());
+        assertEquals(SlothIcons.Kind.CLOSE,
+                ((SlothIcons) findTagged(bar, "Close find")).kind());
         assertEquals("forward is bit 0 clear in this build's flag table", 0, SlothFind.FORWARD);
         assertEquals("backwards is bit 0 set", 1, SlothFind.BACKWARDS);
     }
@@ -1564,7 +1570,127 @@ public class SlothShellTest {
 
         EditText shown = findAddress(overlayOf(activity));
         assertNotNull("the bar owns an address field", shown);
-        assertEquals("https://example.org/page", shown.getText().toString());
+        assertEquals("the bar shows the host", "example.org", shown.getText().toString());
+        assertEquals("the full URL is kept for go()", "https://example.org/page",
+                SlothShell.committedUrl());
+    }
+
+    /** Tapping the field reveals the URL go() will receive, and leaving it puts the host back. */
+    @Test
+    public void tappingTheAddressRevealsTheFullUrl() {
+        TestActivity activity = build();
+        activity.binding.urlBar.setText("https://user@example.org:8443/page?q=1");
+        SlothShell.own(activity);
+        EditText shown = findAddress(overlayOf(activity));
+        assertEquals("example.org", shown.getText().toString());
+
+        shown.requestFocus();
+        org.robolectric.shadows.ShadowLooper.idleMainLooper();
+        assertEquals("editing shows the whole URL",
+                "https://user@example.org:8443/page?q=1", shown.getText().toString());
+
+        DrawerFace.last = null;
+        shown.onEditorAction(android.view.inputmethod.EditorInfo.IME_ACTION_GO);
+        assertEquals("go() receives the full URL, not the host",
+                "https://user@example.org:8443/page?q=1", DrawerFace.last);
+
+        shown.setText("cats");
+        DrawerFace.last = null;
+        shown.onEditorAction(android.view.inputmethod.EditorInfo.IME_ACTION_GO);
+        assertEquals("an edit replaces that URL", "cats", DrawerFace.last);
+    }
+
+    /** The line is the current session's load, and a stopped session hides it. */
+    @Test
+    public void theLoadingBarTracksTheSession() {
+        TestActivity activity = build();
+        org.mozilla.geckoview.GeckoView page = new org.mozilla.geckoview.GeckoView(activity);
+        final boolean[] forwarded = {false};
+        org.mozilla.geckoview.GeckoSession session = new org.mozilla.geckoview.GeckoSession();
+        session.setProgressDelegate(new org.mozilla.geckoview.GeckoSession.ProgressDelegate() {
+            @Override
+            public void onPageStart(org.mozilla.geckoview.GeckoSession s, String url) {
+                forwarded[0] = true;
+            }
+
+            @Override
+            public void onPageStop(org.mozilla.geckoview.GeckoSession s, boolean success) {
+            }
+
+            @Override
+            public void onProgressChange(org.mozilla.geckoview.GeckoSession s, int progress) {
+            }
+
+            @Override
+            public void onSecurityChange(org.mozilla.geckoview.GeckoSession s, Object information) {
+            }
+
+            @Override
+            public void onSessionStateChange(org.mozilla.geckoview.GeckoSession s, Object state) {
+            }
+        });
+        page.setSession(session);
+        ViewGroup window = activity.findViewById(android.R.id.content);
+        ((ViewGroup) window.getChildAt(0)).addView(page);
+        SlothShell.own(activity);
+        settle();
+        SlothShell.tick();
+
+        org.mozilla.geckoview.GeckoSession.ProgressDelegate hooked = session.getProgressDelegate();
+        assertNotNull("the shell installed a progress delegate", hooked);
+        hooked.onPageStart(session, "https://example.com/");
+        settle();
+        assertTrue("the app's own delegate still hears the start", forwarded[0]);
+        View track = findByViewTag(overlayOf(activity), "load-track");
+        View line = findByViewTag(overlayOf(activity), "load-line");
+        assertEquals(View.VISIBLE, track.getVisibility());
+        int started = line.getLayoutParams().width;
+
+        hooked.onProgressChange(session, 60);
+        settle();
+        assertTrue("the line grows with the load: " + line.getLayoutParams().width,
+                line.getLayoutParams().width > started);
+
+        hooked.onPageStop(session, true);
+        settle();
+        assertEquals("a finished page hides the line", View.GONE, track.getVisibility());
+
+        org.mozilla.geckoview.GeckoSession other = new org.mozilla.geckoview.GeckoSession();
+        page.setSession(other);
+        SlothShell.tick();
+        other.getProgressDelegate().onPageStart(other, "https://other.example/");
+        settle();
+        assertEquals("the tab now showing is the one loading", View.VISIBLE, track.getVisibility());
+        page.setSession(session);
+        SlothShell.tick();
+        settle();
+        assertEquals("switching back to the finished tab hides it", View.GONE, track.getVisibility());
+    }
+
+    /** The welcome screen is the app's. The shell does not draw over it. */
+    @Test
+    public void firstRunKeepsTheShellOutOfTheWay() {
+        TestActivity activity = build();
+        SlothShell.own(activity);
+        settle();
+        View surface = findByViewTag(overlayOf(activity), "surface");
+        assertEquals(View.VISIBLE, surface.getVisibility());
+
+        View welcome = new View(activity);
+        welcome.setTag("onboard");
+        ViewGroup window = activity.findViewById(android.R.id.content);
+        ((ViewGroup) window.getChildAt(0)).addView(welcome,
+                new ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT,
+                        ViewGroup.LayoutParams.MATCH_PARENT));
+        SlothShell.tick();
+        assertEquals("the shell steps aside while first run is up", View.GONE, surface.getVisibility());
+        SlothShell.openDrawer(activity);
+        assertEquals("and the drawer stays shut", 0, heightOf(drawerOf(activity)));
+
+        welcome.setVisibility(View.GONE);
+        SlothShell.tick();
+        assertEquals("once first run is gone the shell comes back", View.VISIBLE,
+                surface.getVisibility());
     }
 
     @Test
@@ -2518,8 +2644,10 @@ public class SlothShellTest {
         ((android.widget.EditText) activity.binding.urlBar).setText("sloth.example/page");
         SlothShell.own(activity);
 
-        View label = findChip(drawerOf(activity), "sloth.example/page");
-        assertNotNull("the address is on show", label);
+        View label = findChip(drawerOf(activity), "sloth.example");
+        assertNotNull("the host is on show", label);
+        assertTrue("the full address is what a tap copies",
+                String.valueOf(label.getContentDescription()).contains("sloth.example/page"));
     }
 
     @Test
@@ -5026,7 +5154,8 @@ public class SlothShellTest {
                 java.util.concurrent.TimeUnit.MILLISECONDS);
 
         assertNotNull("the bar catches up on its own",
-                findText(overlayOf(activity), "example.org/leaf"));
+                findText(overlayOf(activity), "example.org"));
+        assertEquals("and it kept the omnibox value", "example.org/leaf", SlothShell.committedUrl());
     }
 
     @Test

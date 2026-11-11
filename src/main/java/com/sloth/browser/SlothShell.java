@@ -199,6 +199,10 @@ public final class SlothShell {
     private static View barWrapView;
     private static View fwdGlyph;
     private static View clearTag;
+    /** The omnibox text in full. The field shows only the host until it is edited. */
+    private static String committedUrl = "";
+    private static View loadTrack;
+    private static View loadLine;
     private static TextView TabFace;
     private static float downY;
     private static float startH;
@@ -500,6 +504,9 @@ public final class SlothShell {
         settingsPage = null;
         diagPage = null;
         clearTag = null;
+        committedUrl = "";
+        loadTrack = null;
+        loadLine = null;
         TabFace = null;
         pill = null;
         dockH = -1;
@@ -550,6 +557,12 @@ public final class SlothShell {
     }
 
     public static void own(final Activity activity) {
+        SlothLoad.setListener(new SlothLoad.Listener() {
+            @Override
+            public void changed() {
+                paintLoad();
+            }
+        });
         try {
             SlothTheme.load(activity);
             // what went wrong in the last session is worth reading in this one
@@ -682,8 +695,23 @@ public final class SlothShell {
             barWrapView = barWrap;
             barWrap.addView(bar, new LinearLayout.LayoutParams(
                     ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+            // the line lives in the bar, not between the bar and the drawer: the column
+            // stays those two, which is what makes them one surface
+            barWrap.setOrientation(LinearLayout.VERTICAL);
             column.addView(barWrap, new LinearLayout.LayoutParams(
                     ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+            FrameLayout track = new FrameLayout(activity);
+            track.setTag("load-track");
+            track.setVisibility(View.GONE);
+            View line = new View(activity);
+            line.setTag("load-line");
+            line.setBackgroundColor(SlothTheme.accent());
+            line.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);
+            track.addView(line, new FrameLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT));
+            barWrap.addView(track, new LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT, dp(activity, 3)));
+            loadTrack = track;
+            loadLine = line;
             // no rule between the bar and the dashboard: a divider is the cheapest way to
             // say "two things", which is the opposite of what this surface is
 
@@ -1181,6 +1209,9 @@ public final class SlothShell {
         menu.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View v) {
+                if (blockForFirstRun(activity)) {
+                    return;
+                }
                 animateTo(activity, openHeight(activity));
             }
         });
@@ -1220,6 +1251,9 @@ public final class SlothShell {
         chip.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View v) {
+                if (blockForFirstRun(activity)) {
+                    return;
+                }
                 animateTo(activity, openHeight(activity));
             }
         });
@@ -2459,7 +2493,7 @@ public final class SlothShell {
 
     /** Show the dashboard: the menu that used to be the app's drawer is this now. */
     static void openDrawer(Activity activity) {
-        if (drawer == null) {
+        if (drawer == null || blockForFirstRun(activity)) {
             return;
         }
         hideSettingsPage(activity);
@@ -2560,21 +2594,31 @@ public final class SlothShell {
         return true;
     }
 
+    /** The host. The rule lives in {@link SlothAddress}; this is the shell's name for it. */
+    static String hostOf(String raw) {
+        return SlothAddress.host(raw);
+    }
+
+    /** What the omnibox last said, in full. The field may be showing only the host. */
+    static String committedUrl() {
+        return committedUrl;
+    }
+
+    /** Show {@code full} as a host while the field is resting. */
+    private static void showAddress(String full) {
+        committedUrl = full == null ? "" : full;
+        if (address == null || address.hasFocus()) {
+            return;
+        }
+        String shown = SlothAddress.host(committedUrl);
+        if (!shown.contentEquals(address.getText() == null ? "" : address.getText())) {
+            address.setText(shown);
+        }
+    }
+
     /** Whether the field holds something with a host in it, rather than a search phrase. */
     static boolean looksLikeAddress(String text) {
-        if (text == null) {
-            return false;
-        }
-        String value = text.trim();
-        if (value.length() == 0 || value.contains(" ")) {
-            return false;
-        }
-        int host = value.indexOf("://") >= 0 ? value.indexOf("://") + 3 : 0;
-        String rest = value.substring(host);
-        int slash = rest.indexOf('/');
-        String name = slash < 0 ? rest : rest.substring(0, slash);
-        return name.startsWith("localhost") || (name.contains(".") && !name.startsWith(".")
-                && !name.endsWith("."));
+        return SlothAddress.looksLike(text);
     }
 
     /** Deep surface, hairline edge, enough contrast to read against a page. */
@@ -2659,8 +2703,15 @@ public final class SlothShell {
         input.setOnFocusChangeListener(new View.OnFocusChangeListener() {
             @Override
             public void onFocusChange(View v, boolean hasFocus) {
-                if (hasFocus) {
-                    input.selectAll();
+                String visible = input.getText() == null ? "" : input.getText().toString();
+                String next = hasFocus
+                        ? SlothAddress.focused(committedUrl, visible)
+                        : SlothAddress.blurred(committedUrl, visible);
+                if (!next.contentEquals(visible)) {
+                    input.setText(next);
+                    if (hasFocus) {
+                        input.selectAll();
+                    }
                 }
                 pillBg.setStroke(Math.max(1, dp(activity, 1)),
                         hasFocus ? SlothTheme.lineAt(0x8C) : SlothTheme.lineAt(0x2E));
@@ -3928,6 +3979,65 @@ public final class SlothShell {
      * and without a tick the address field and the tab count only caught up when the owner
      * touched something of ours. The bar has to follow the page on its own.</p>
      */
+    /**
+     * While the app's first-run screen is up, the shell stays out of its way.
+     * Returns true when the caller should not open the drawer.
+     */
+    static boolean blockForFirstRun(Activity activity) {
+        boolean showing = firstRunShowing(activity);
+        if (surfaceView != null) {
+            int want = showing ? View.GONE : View.VISIBLE;
+            if (surfaceView.getVisibility() != want) {
+                surfaceView.setVisibility(want);
+            }
+        }
+        if (showing) {
+            closeDrawerFor(activity);
+        }
+        return showing;
+    }
+
+    /** The app's welcome screen. The shell only asks; {@link SlothFirstRun} answers. */
+    static boolean firstRunShowing(Activity activity) {
+        if (activity == null) {
+            return false;
+        }
+        return SlothFirstRun.showing(activity.findViewById(android.R.id.content));
+    }
+
+    /** The line under the bar, from the current session's progress. Hidden when idle. */
+    static void paintLoad() {
+        if (loadTrack == null || loadLine == null) {
+            return;
+        }
+        Activity activity = owner;
+        Object session = null;
+        if (activity != null) {
+            try {
+                session = SlothFind.session(activity);
+            } catch (Throwable ignored) {
+            }
+        }
+        int progress = SlothLoad.shown(session);
+        if (progress < 0) {
+            if (loadTrack.getVisibility() != View.GONE) {
+                loadTrack.setVisibility(View.GONE);
+            }
+            return;
+        }
+        loadTrack.setVisibility(View.VISIBLE);
+        int full = loadTrack.getWidth();
+        if (full <= 0 && activity != null) {
+            full = screenWidth(activity);
+        }
+        int width = full <= 0 ? 0 : Math.max(dp(activity, 2), full * progress / 100);
+        ViewGroup.LayoutParams lp = loadLine.getLayoutParams();
+        if (lp != null && lp.width != width) {
+            lp.width = width;
+            loadLine.setLayoutParams(lp);
+        }
+    }
+
     static void tick() {
         // read the owner at tick time: a rotation replaces it, and a loop that captured the
         // old activity would go quiet for the rest of the session
@@ -3936,12 +4046,14 @@ public final class SlothShell {
             return;
         }
         try {
+            blockForFirstRun(activity);
+            SlothLoad.watch(activity);
+            paintLoad();
             View real = resolve(activity, "urlBar");
             if (real instanceof EditText && address != null && !address.hasFocus()) {
                 CharSequence text = ((EditText) real).getText();
-                if (text != null && !text.toString().contentEquals(address.getText())) {
-                    address.setText(text.toString());
-                    address.setSelection(address.getText().length());
+                if (text != null) {
+                    showAddress(text.toString());
                 }
             }
             // the app can leave the page at zero height on its own - a restart, a cleared
@@ -3952,9 +4064,9 @@ public final class SlothShell {
             checkEdgeWindow(activity);
             syncHistory(activity);
             if (board != null && address != null) {
-                // the drawer's address line is the same fact as the bar's, so it is kept
-                // the same way: on the timer, not only when the drawer is rebuilt
-                board.onSite(String.valueOf(address.getText()));
+                // the drawer's address line is the host the bar is showing, not the full URL
+                board.onSite(committedUrl.length() > 0 ? committedUrl
+                        : String.valueOf(address.getText()));
             }
             int count = tabCount(activity);
             if (TabFace != null && !String.valueOf(count).contentEquals(TabFace.getText())) {
@@ -3985,11 +4097,13 @@ public final class SlothShell {
             View real = resolve(activity, "urlBar");
             if (real instanceof EditText && address != null && !address.hasFocus()) {
                 CharSequence text = ((EditText) real).getText();
-                if (text != null && !text.toString().contentEquals(address.getText())) {
-                    address.setText(text.toString());
-                    address.setSelection(address.getText().length());
+                if (text != null) {
+                    showAddress(text.toString());
                 }
             }
+            SlothLoad.watch(activity);
+            paintLoad();
+            blockForFirstRun(activity);
 
             if (board != null) {
                 board.mirror(activity);
