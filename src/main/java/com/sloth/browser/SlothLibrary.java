@@ -254,7 +254,7 @@ final class SlothLibrary {
             }
             bookmarks.add(entry);
             call(vault, "persist");
-            SlothLog.note("library saved " + url);
+            SlothLog.note("library saved " + SlothAddress.host(url));
             fill("bookmarks");
         } catch (Throwable t) {
             SlothLog.note("library could not save: " + t.getClass().getSimpleName());

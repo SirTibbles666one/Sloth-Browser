@@ -100,6 +100,27 @@ public class SlothShellTest {
             vaults++;
         }
 
+        private void importVault() {
+            imports++;
+        }
+
+        /** Null until a passphrase has created a vault file. Export must notice. */
+        public byte[] vaultFile;
+        public int imports;
+
+        public Object getVault() {
+            final TestActivity activity = this;
+            return new Object() {
+                public boolean hasVault() {
+                    return activity.vaultFile != null && activity.vaultFile.length > 0;
+                }
+
+                public byte[] vaultBytes() {
+                    return activity.vaultFile;
+                }
+            };
+        }
+
         private void startEngine() {
             restarts++;
         }
@@ -1171,6 +1192,12 @@ public class SlothShellTest {
         }
         assertTrue("a previous button: " + labels, labels.contains("Previous match"));
         assertTrue("a next button: " + labels, labels.contains("Next match"));
+        assertEquals(SlothIcons.Kind.BACK,
+                ((SlothIcons) findTagged(bar, "Previous match")).kind());
+        assertEquals(SlothIcons.Kind.FORWARD,
+                ((SlothIcons) findTagged(bar, "Next match")).kind());
+        assertEquals(SlothIcons.Kind.CLOSE,
+                ((SlothIcons) findTagged(bar, "Close find")).kind());
         assertEquals("forward is bit 0 clear in this build's flag table", 0, SlothFind.FORWARD);
         assertEquals("backwards is bit 0 set", 1, SlothFind.BACKWARDS);
     }
@@ -1564,7 +1591,183 @@ public class SlothShellTest {
 
         EditText shown = findAddress(overlayOf(activity));
         assertNotNull("the bar owns an address field", shown);
-        assertEquals("https://example.org/page", shown.getText().toString());
+        assertEquals("the bar shows the host", "example.org", shown.getText().toString());
+        assertEquals("the full URL is kept for go()", "https://example.org/page",
+                SlothShell.committedUrl());
+    }
+
+    /** Tapping the field reveals the URL go() will receive, and leaving it puts the host back. */
+    @Test
+    public void tappingTheAddressRevealsTheFullUrl() {
+        TestActivity activity = build();
+        activity.binding.urlBar.setText("https://user@example.org:8443/page?q=1");
+        SlothShell.own(activity);
+        EditText shown = findAddress(overlayOf(activity));
+        assertEquals("example.org", shown.getText().toString());
+
+        shown.requestFocus();
+        org.robolectric.shadows.ShadowLooper.idleMainLooper();
+        assertEquals("editing shows the whole URL",
+                "https://user@example.org:8443/page?q=1", shown.getText().toString());
+
+        DrawerFace.last = null;
+        shown.onEditorAction(android.view.inputmethod.EditorInfo.IME_ACTION_GO);
+        assertEquals("go() receives the full URL, not the host",
+                "https://user@example.org:8443/page?q=1", DrawerFace.last);
+
+        shown.setText("cats");
+        DrawerFace.last = null;
+        shown.onEditorAction(android.view.inputmethod.EditorInfo.IME_ACTION_GO);
+        assertEquals("an edit replaces that URL", "cats", DrawerFace.last);
+    }
+
+    /**
+     * The base omnibox reduces every address to its host. Tapping the field has to
+     * reveal the tab's URL, not that host a second time.
+     */
+    @Test
+    public void tappingTheAddressRevealsTheTabsUrl() {
+        TestActivity activity = build();
+        org.mozilla.geckoview.GeckoView page = new org.mozilla.geckoview.GeckoView(activity);
+        org.mozilla.geckoview.GeckoSession session = new org.mozilla.geckoview.GeckoSession();
+        page.setSession(session);
+        ViewGroup window = activity.findViewById(android.R.id.content);
+        ((ViewGroup) window.getChildAt(0)).addView(page);
+        activity.binding.urlBar.setText("example.org");
+        SlothShell.own(activity);
+        settle();
+        SlothShell.tick();
+
+        org.mozilla.geckoview.GeckoSession.ProgressDelegate hooked = session.getProgressDelegate();
+        hooked.onPageStart(session, "https://example.org/leaf?q=1");
+        settle();
+        SlothShell.tick();
+
+        EditText shown = findAddress(overlayOf(activity));
+        assertEquals("the bar still rests on the host", "example.org", shown.getText().toString());
+        assertEquals("the tab URL replaced the stripped omnibox",
+                "https://example.org/leaf?q=1", SlothShell.committedUrl());
+
+        shown.requestFocus();
+        org.robolectric.shadows.ShadowLooper.idleMainLooper();
+        assertEquals("tapping reveals the tab's URL, not the host again",
+                "https://example.org/leaf?q=1", shown.getText().toString());
+        assertEquals("example.org", SlothAddress.blurred(
+                "https://example.org/leaf?q=1", "https://example.org/leaf?q=1"));
+    }
+
+    /** The line is the current session's load, and a stopped session hides it. */
+    @Test
+    public void theLoadingBarTracksTheSession() {
+        TestActivity activity = build();
+        org.mozilla.geckoview.GeckoView page = new org.mozilla.geckoview.GeckoView(activity);
+        final boolean[] forwarded = {false};
+        org.mozilla.geckoview.GeckoSession session = new org.mozilla.geckoview.GeckoSession();
+        session.setProgressDelegate(new org.mozilla.geckoview.GeckoSession.ProgressDelegate() {
+            @Override
+            public void onPageStart(org.mozilla.geckoview.GeckoSession s, String url) {
+                forwarded[0] = true;
+            }
+
+            @Override
+            public void onPageStop(org.mozilla.geckoview.GeckoSession s, boolean success) {
+            }
+
+            @Override
+            public void onProgressChange(org.mozilla.geckoview.GeckoSession s, int progress) {
+            }
+
+            @Override
+            public void onSecurityChange(org.mozilla.geckoview.GeckoSession s, Object information) {
+            }
+
+            @Override
+            public void onSessionStateChange(org.mozilla.geckoview.GeckoSession s, Object state) {
+            }
+        });
+        page.setSession(session);
+        ViewGroup window = activity.findViewById(android.R.id.content);
+        ((ViewGroup) window.getChildAt(0)).addView(page);
+        SlothShell.own(activity);
+        settle();
+        SlothShell.tick();
+
+        org.mozilla.geckoview.GeckoSession.ProgressDelegate hooked = session.getProgressDelegate();
+        assertNotNull("the shell installed a progress delegate", hooked);
+        hooked.onPageStart(session, "https://example.com/");
+        settle();
+        assertTrue("the app's own delegate still hears the start", forwarded[0]);
+        View track = findByViewTag(overlayOf(activity), "load-track");
+        View line = findByViewTag(overlayOf(activity), "load-line");
+        assertEquals(View.VISIBLE, track.getVisibility());
+        int started = line.getLayoutParams().width;
+
+        hooked.onProgressChange(session, 60);
+        settle();
+        assertTrue("the line grows with the load: " + line.getLayoutParams().width,
+                line.getLayoutParams().width > started);
+
+        hooked.onPageStop(session, true);
+        settle();
+        assertEquals("a finished page hides the line", View.GONE, track.getVisibility());
+
+        org.mozilla.geckoview.GeckoSession other = new org.mozilla.geckoview.GeckoSession();
+        page.setSession(other);
+        SlothShell.tick();
+        other.getProgressDelegate().onPageStart(other, "https://other.example/");
+        settle();
+        assertEquals("the tab now showing is the one loading", View.VISIBLE, track.getVisibility());
+        page.setSession(session);
+        SlothShell.tick();
+        settle();
+        assertEquals("switching back to the finished tab hides it", View.GONE, track.getVisibility());
+    }
+
+    /** The welcome screen is the app's. The shell does not draw over it. */
+    @Test
+    public void firstRunKeepsTheShellOutOfTheWay() {
+        TestActivity activity = build();
+        SlothShell.own(activity);
+        settle();
+        View surface = findByViewTag(overlayOf(activity), "surface");
+        assertEquals(View.VISIBLE, surface.getVisibility());
+
+        View welcome = new View(activity);
+        welcome.setTag("onboard");
+        ViewGroup window = activity.findViewById(android.R.id.content);
+        ((ViewGroup) window.getChildAt(0)).addView(welcome,
+                new ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT,
+                        ViewGroup.LayoutParams.MATCH_PARENT));
+        SlothShell.tick();
+        assertEquals("the shell steps aside while first run is up", View.GONE, surface.getVisibility());
+        SlothShell.openDrawer(activity);
+        assertEquals("and the drawer stays shut", 0, heightOf(drawerOf(activity)));
+
+        welcome.setVisibility(View.GONE);
+        SlothShell.tick();
+        assertEquals("once first run is gone the shell comes back", View.VISIBLE,
+                surface.getVisibility());
+    }
+
+    @Test
+    public void finishedOnboardingStopsTheFirstRunScan() {
+        TestActivity activity = build();
+        activity.settings.onboardingDone = true;
+        View welcome = new View(activity);
+        welcome.setTag("onboard");
+        ViewGroup window = activity.findViewById(android.R.id.content);
+        ((ViewGroup) window.getChildAt(0)).addView(welcome);
+        int before = SlothShell.firstRunScansForTest;
+
+        SlothShell.own(activity);
+        settle();
+        SlothShell.tick();
+        SlothShell.tick();
+
+        assertEquals("the welcome view is not consulted once the flag is set",
+                before, SlothShell.firstRunScansForTest);
+        assertEquals("and the shell stays up", View.VISIBLE,
+                findByViewTag(overlayOf(activity), "surface").getVisibility());
     }
 
     @Test
@@ -1949,9 +2152,9 @@ public class SlothShellTest {
                         .startsWith("Site settings"));
     }
 
-    /** The omnibox shows the host alone. That is not an http address. */
+    /** A host with the scheme already gone is not a secure connection by itself. */
     @Test
-    public void theOmniboxHostIsNotCalledInsecure() {
+    public void aBareHostIsNotCalledSecure() {
         TestActivity activity = build();
         SlothShell.own(activity);
         EditText shown = findAddress(overlayOf(activity));
@@ -1960,15 +2163,49 @@ public class SlothShellTest {
         org.robolectric.shadows.ShadowLooper.idleMainLooper();
 
         SlothIcons lock = (SlothIcons) findLock(overlayOf(activity));
-        assertEquals("a host with the scheme stripped is the page, not http",
-                SlothTheme.dim(), lock.colour());
-        assertTrue(String.valueOf(lock.getContentDescription()).contains("secure connection"));
+        assertEquals("a stripped host is not evidence of https",
+                0xFFE2A05A, lock.colour());
+        assertTrue(String.valueOf(lock.getContentDescription()).contains("not a secure"));
 
         shown.requestFocus();
         shown.setText("example.com");
         org.robolectric.shadows.ShadowLooper.idleMainLooper();
         assertEquals("while it is being typed, a bare host is not vouched for",
                 0xFFE2A05A, ((SlothIcons) findLock(overlayOf(activity))).colour());
+    }
+
+    /**
+     * The 1253 lock treated a schemeless host as secure. The field shows that host
+     * for http and https alike, so the page URL is what has to decide.
+     */
+    @Test
+    public void anHttpPageShowsInsecure() {
+        TestActivity activity = build();
+        org.mozilla.geckoview.GeckoView page = new org.mozilla.geckoview.GeckoView(activity);
+        org.mozilla.geckoview.GeckoSession session = new org.mozilla.geckoview.GeckoSession();
+        page.setSession(session);
+        ViewGroup window = activity.findViewById(android.R.id.content);
+        ((ViewGroup) window.getChildAt(0)).addView(page);
+        activity.binding.urlBar.setText("example.com");
+        SlothShell.own(activity);
+        settle();
+        SlothShell.tick();
+        assertEquals("example.com", findAddress(overlayOf(activity)).getText().toString());
+
+        org.mozilla.geckoview.GeckoSession.ProgressDelegate hooked = session.getProgressDelegate();
+        hooked.onPageStart(session, "http://example.com/");
+        settle();
+        SlothIcons lock = (SlothIcons) findLock(overlayOf(activity));
+        assertEquals("an http page is insecure even when the field shows only the host",
+                0xFFE2A05A, lock.colour());
+        assertTrue(String.valueOf(lock.getContentDescription()).contains("not a secure"));
+
+        hooked.onPageStart(session, "https://example.com/");
+        settle();
+        lock = (SlothIcons) findLock(overlayOf(activity));
+        assertEquals("https stays secure when the field still shows the host",
+                SlothTheme.dim(), lock.colour());
+        assertTrue(String.valueOf(lock.getContentDescription()).contains("secure connection"));
     }
 
     /** A refused save must not paint a number the browser did not keep. */
@@ -2050,6 +2287,18 @@ public class SlothShellTest {
                 column.getPaddingTop() >= SlothShell.topChromePx(activity));
     }
 
+    @Test
+    public void theSettingsOffsetIsTheBarThatWasMeasured() {
+        TestActivity activity = build();
+        SlothShell.own(activity);
+        View bar = findByViewTag(overlayOf(activity), "bar");
+        bar.layout(0, 0, 400, 140);
+        int measured = SlothShell.topChromePx(activity);
+        int assumed = Math.round(72 * activity.getResources().getDisplayMetrics().density);
+        assertTrue("a laid-out bar replaces the 72dp guess: " + measured + " vs " + assumed,
+                measured >= 140 && measured != assumed);
+    }
+
     private View findLock(View root) {
         final View[] hit = new View[1];
         walk(root, new ViewVisitor() {
@@ -2072,6 +2321,8 @@ public class SlothShellTest {
         View bar = findByViewTag(overlayOf(activity), "bar");
         View counter = findChip(bar, "3");
         assertNotNull("counter shows the browser's own count", counter);
+        assertNotNull("and it says how many tabs are open",
+                byDescription(bar, "3 tabs"));
 
         tapChip(bar, "3");
         settle();
@@ -2433,7 +2684,7 @@ public class SlothShellTest {
                 .edit().putBoolean("drawerExpanded", true).apply();
         SlothShell.own(activity);
 
-        View tabsChip = findTagged(overlayOf(activity), "Tabs");
+        View tabsChip = findTagged(overlayOf(activity), "3 tabs");
         assertNotNull(tabsChip);
         tabsChip.performClick();
         settle();
@@ -2449,7 +2700,7 @@ public class SlothShellTest {
         TestActivity activity = build();
         SlothShell.own(activity);
 
-        View chip = findTagged(overlayOf(activity), "Tabs");
+        View chip = findTagged(overlayOf(activity), "3 tabs");
         assertNotNull(chip);
         chip.performLongClick();
 
@@ -2518,8 +2769,10 @@ public class SlothShellTest {
         ((android.widget.EditText) activity.binding.urlBar).setText("sloth.example/page");
         SlothShell.own(activity);
 
-        View label = findChip(drawerOf(activity), "sloth.example/page");
-        assertNotNull("the address is on show", label);
+        View label = findChip(drawerOf(activity), "sloth.example");
+        assertNotNull("the host is on show", label);
+        assertTrue("the full address is what a tap copies",
+                String.valueOf(label.getContentDescription()).contains("sloth.example/page"));
     }
 
     @Test
@@ -2577,7 +2830,7 @@ public class SlothShellTest {
                 android.provider.Settings.Global.ANIMATOR_DURATION_SCALE, 0f);
         SlothShell.own(activity);
 
-        View tabsChip = findTagged(overlayOf(activity), "Tabs");
+        View tabsChip = findTagged(overlayOf(activity), "3 tabs");
         tabsChip.performClick();
 
         assertEquals(1f, drawerOf(activity).getAlpha(), 0.001f);
@@ -2695,7 +2948,7 @@ public class SlothShellTest {
         assertNotNull(scroller);
         scroller.scrollTo(0, 400);
 
-        View tabsChip = findTagged(overlayOf(activity), "Tabs");
+        View tabsChip = findTagged(overlayOf(activity), "3 tabs");
         tabsChip.performClick();
         settle();
 
@@ -2708,7 +2961,7 @@ public class SlothShellTest {
         TestActivity activity = build();
         SlothShell.own(activity);
 
-        View tabsChip = findTagged(overlayOf(activity), "Tabs");
+        View tabsChip = findTagged(overlayOf(activity), "3 tabs");
         assertNotNull(tabsChip);
         assertTrue("the control is long-pressable", ((View) tabsChip).isLongClickable());
         // the app's switcher is not on this classpath; the press must not throw
@@ -2836,6 +3089,37 @@ public class SlothShellTest {
         int screen = activity.getResources().getDisplayMetrics().heightPixels;
         assertTrue("the drawer never covers the whole screen: " + height + " of " + screen,
                 height > 0 && height <= Math.round(screen * 0.85f));
+    }
+
+    @Test
+    public void theStripListsTheOpenTabsNotTheTabButton() {
+        TestActivity activity = build();
+        // slotTabs in the 1108 base is the bar's tab button: a mark and a count
+        activity.binding.slotTabs.setTag(null);
+        activity.binding.slotTabs.removeAllViews();
+        android.widget.TextView mark = new android.widget.TextView(activity);
+        mark.setText("T");
+        android.widget.TextView count = new android.widget.TextView(activity);
+        count.setText("1");
+        activity.binding.slotTabs.addView(mark);
+        activity.binding.slotTabs.addView(count);
+
+        android.widget.LinearLayout strip = new android.widget.LinearLayout(activity);
+        strip.setTag("tab-squares");
+        for (String title : new String[]{"News", "Mail"}) {
+            android.widget.TextView chip = new android.widget.TextView(activity);
+            chip.setText(title);
+            chip.setTag("tab");
+            strip.addView(chip);
+        }
+        ViewGroup content = activity.findViewById(android.R.id.content);
+        ((ViewGroup) content.getChildAt(0)).addView(strip);
+
+        SlothShell.own(activity);
+        View drawer = drawerOf(activity);
+        assertNotNull("the first open tab", findChip(drawer, "News"));
+        assertNotNull("the second open tab", findChip(drawer, "Mail"));
+        assertNull("the tab button is not listed as a tab", findChip(drawer, "T"));
     }
 
     @Test
@@ -4007,6 +4291,60 @@ public class SlothShellTest {
     }
 
     @Test
+    public void vaultRowsNameTheVaultAndRefuseASilentExport() {
+        TestActivity activity = build();
+        SlothShell.own(activity);
+        SlothShell.openSettingsPage(activity);
+        settle();
+        View page = findByViewTag(overlayOf(activity), "settings-page");
+
+        assertNotNull(findChip(page, "Export vault"));
+        assertNotNull(findChip(page, "Restore vault"));
+        assertNull(findChip(page, "Export bookmarks"));
+        assertNull(findChip(page, "Import bookmarks"));
+
+        tapChip(page, "Export vault");
+        settle();
+        android.app.Dialog missing = org.robolectric.shadows.ShadowDialog.getLatestDialog();
+        assertNotNull("a missing vault is said out loud", missing);
+        assertTrue(missing.isShowing());
+        String said = dumpText(missing.getWindow().getDecorView());
+        assertTrue("it names the missing passphrase: " + said, said.contains("passphrase"));
+        assertTrue(said.contains("Nothing was saved"));
+        assertEquals("export was not started", 0, activity.vaults);
+        ((android.app.AlertDialog) missing).getButton(
+                android.content.DialogInterface.BUTTON_POSITIVE).performClick();
+        settle();
+
+        activity.vaultFile = new byte[]{1, 2, 3};
+        tapChip(page, "Export vault");
+        settle();
+        assertEquals("a real vault file starts the export", 1, activity.vaults);
+
+        tapChip(page, "Restore vault");
+        settle();
+        android.app.Dialog confirm = org.robolectric.shadows.ShadowDialog.getLatestDialog();
+        assertNotNull(confirm);
+        String warning = dumpText(confirm.getWindow().getDecorView());
+        assertTrue("the warning says this replaces saved data: " + warning,
+                warning.contains("replaces") && warning.contains("logins"));
+        assertTrue(warning.contains("not merged"));
+        assertEquals("nothing is restored before the answer", 0, activity.imports);
+        ((android.app.AlertDialog) confirm).getButton(
+                android.content.DialogInterface.BUTTON_NEGATIVE).performClick();
+        settle();
+        assertEquals("cancel leaves the vault alone", 0, activity.imports);
+
+        tapChip(page, "Restore vault");
+        settle();
+        confirm = org.robolectric.shadows.ShadowDialog.getLatestDialog();
+        ((android.app.AlertDialog) confirm).getButton(
+                android.content.DialogInterface.BUTTON_POSITIVE).performClick();
+        settle();
+        assertEquals("restore runs only after the warning", 1, activity.imports);
+    }
+
+    @Test
     public void settingsPageIsThemedAndItsRowsAreReal() {
         TestActivity activity = build();
         SlothShell.own(activity);
@@ -4190,18 +4528,33 @@ public class SlothShellTest {
     }
 
     @Test
-    public void screenPrivacyIsOffOnceAndStaysOffIfYouTurnItBackOn() {
+    public void screenPrivacyFollowsTheSetting() {
         TestActivity activity = build();
         assertTrue("the browser starts with the guard on", activity.settings.screenGuard);
+        SlothShell.own(activity);
+        int secure = android.view.WindowManager.LayoutParams.FLAG_SECURE;
+        assertTrue("launch blocks screenshots when the setting is on",
+                (activity.getWindow().getAttributes().flags & secure) != 0);
+        assertTrue("launch does not turn the setting off", activity.settings.screenGuard);
+        assertEquals("and it does not rewrite the setting to do it", 0, activity.settingsSaved);
 
-        assertTrue("the shell clears it", SlothShell.guardOff(activity));
-        assertFalse("and it is off", activity.settings.screenGuard);
-        assertEquals("the clear is saved, not just held in memory", 1, activity.settingsSaved);
+        SlothShell.openSettingsPage(activity);
+        settle();
+        tapChip(findByViewTag(overlayOf(activity), "settings-page"), "Block screenshots");
+        settle();
+        assertFalse("the switch turned it off", activity.settings.screenGuard);
+        assertEquals("and the window follows", 0,
+                activity.getWindow().getAttributes().flags & secure);
 
-        // turning it back on by hand must survive the next launch
+        SlothShell.own(activity);
+        assertFalse("the next launch keeps the choice", activity.settings.screenGuard);
+        assertEquals("and still does not block", 0,
+                activity.getWindow().getAttributes().flags & secure);
+
         activity.settings.screenGuard = true;
-        assertFalse("the one-time clear does not run twice", SlothShell.guardOff(activity));
-        assertTrue("so the choice sticks", activity.settings.screenGuard);
+        SlothShell.applyScreenGuard(activity);
+        assertTrue("turning it back on blocks again",
+                (activity.getWindow().getAttributes().flags & secure) != 0);
     }
 
     @Test
@@ -4867,6 +5220,16 @@ public class SlothShellTest {
         assertTrue("and where the seats sit", text.contains("seats:"));
         assertTrue("and what the page is doing", text.contains("page:"));
         assertTrue("and whether a session is attached", text.contains("page session:"));
+
+        activity.binding.urlBar.setText("https://secret.example/private/path?q=1");
+        SlothShell.openDiagPage(activity);
+        settle();
+        page = findByViewTag(overlayOf(activity), "diag-page");
+        report = findTextContaining(page, "sloth diagnostics");
+        text = ((android.widget.TextView) report).getText().toString();
+        assertTrue("the report names the host: " + text, text.contains("host: secret.example"));
+        assertFalse("and not the path", text.contains("/private/path"));
+        assertFalse("and not the full URL", text.contains("https://secret.example"));
     }
 
     @Test
@@ -5026,7 +5389,8 @@ public class SlothShellTest {
                 java.util.concurrent.TimeUnit.MILLISECONDS);
 
         assertNotNull("the bar catches up on its own",
-                findText(overlayOf(activity), "example.org/leaf"));
+                findText(overlayOf(activity), "example.org"));
+        assertEquals("and it kept the omnibox value", "example.org/leaf", SlothShell.committedUrl());
     }
 
     @Test

@@ -1,5 +1,11 @@
 # Audit — build 1223
 
+This file is the 1223 pass, kept as the record of that pass. It is not the current shell.
+Since then the shell has gained edge-to-edge drawing, a loading line, a host-only address
+bar that still knows the tab's real URL, a first-run check, and a screenshot block that
+follows its setting. The open list at the bottom was true for 1223; treat it as history
+unless an item is still visible in the code.
+
 A read of the whole shell: 15 classes, 7,254 lines at the start of the pass. What follows is
 what was wrong, in the order it matters, and what was done about it. Fixed means a test or a
 gate fails without the change; open means it is still open and why.

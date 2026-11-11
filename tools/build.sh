@@ -23,6 +23,15 @@ VERSION="${1:?usage: build.sh <versionCode>}"
 : "${ANDROID_HOME:?set ANDROID_HOME}"
 : "${JAVA_HOME:?set JAVA_HOME}"
 
+# The published 1108 release. A different file is a different app, and the hook
+# would still run.
+BASE_SHA256="c6cec08107d57ffc9b566051accb54b7df814ffd1ec616a3a59c0a6f2850089e"
+actual="$(sha256sum "$BASE_APK" | awk '{print $1}')"
+if [ "$actual" != "$BASE_SHA256" ]; then
+    echo "base APK sha256 $actual does not match the 1108 release $BASE_SHA256"
+    exit 1
+fi
+
 HERE="$(cd "$(dirname "$0")/.." && pwd)"
 OUT="${OUT:-$HERE/build}"
 BUILD_TOOLS="${BUILD_TOOLS:-$ANDROID_HOME/build-tools/36.0.0}"
@@ -67,8 +76,9 @@ PY
 
 echo "== align and sign"
 "$BUILD_TOOLS/zipalign" -p -f 4 "$WORK/clean.apk" "$WORK/aligned.apk"
+# env: keeps the passwords out of the process list. pass: would put them on argv.
 "$BUILD_TOOLS/apksigner" sign --ks "$KEYSTORE" --ks-key-alias sloth \
-    --ks-pass "pass:$KS_PASS" --key-pass "pass:$KEY_PASS" \
+    --ks-pass env:KS_PASS --key-pass env:KEY_PASS \
     --min-sdk-version 26 --v1-signing-enabled true --v2-signing-enabled true \
     --v3-signing-enabled true --out "$OUT/SlothBrowser-$VERSION.apk" "$WORK/aligned.apk"
 

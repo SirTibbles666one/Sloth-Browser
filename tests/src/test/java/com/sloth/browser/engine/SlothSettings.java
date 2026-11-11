@@ -10,6 +10,11 @@ package com.sloth.browser.engine;
 public class SlothSettings extends EngineBase {
 
     public boolean screenGuard = true;
+    public boolean onboardingDone;
+
+    public boolean getOnboardingDone() {
+        return onboardingDone;
+    }
     public boolean webrtcBlock;
     public boolean httpsOnly;
     public boolean javascript = true;

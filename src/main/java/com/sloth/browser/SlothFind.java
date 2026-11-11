@@ -73,8 +73,8 @@ final class SlothFind {
         row.addView(field, new LinearLayout.LayoutParams(
                 0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
 
-        final TextView previous = step(activity, "\u2039", "Previous match");
-        final TextView next = step(activity, "\u203a", "Next match");
+        final View previous = step(activity, SlothIcons.Kind.BACK, "Previous match");
+        final View next = step(activity, SlothIcons.Kind.FORWARD, "Next match");
 
         final TextView count = new TextView(activity);
         count.setTextSize(12f);
@@ -89,14 +89,8 @@ final class SlothFind {
         row.addView(next, new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT));
 
-        TextView close = new TextView(activity);
-        close.setText("\u00d7");
-        close.setTextSize(20f);
-        close.setTextColor(SlothTheme.ink());
-        close.setGravity(Gravity.CENTER);
+        SlothIcons close = SlothIcons.of(activity, SlothIcons.Kind.CLOSE, 18, SlothTheme.ink());
         close.setContentDescription("Close find");
-        close.setPadding(pixels(activity, 10), pixels(activity, 4),
-                pixels(activity, 10), pixels(activity, 4));
         close.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View v) {
@@ -138,16 +132,12 @@ final class SlothFind {
         return bar;
     }
 
-    /** A small step button: no glyph font, no icon asset, the same two strokes as the bar. */
-    private static TextView step(Activity activity, String glyph, String description) {
-        TextView view = new TextView(activity);
-        view.setText(glyph);
-        view.setTextSize(20f);
-        view.setTextColor(SlothTheme.ink());
-        view.setGravity(Gravity.CENTER);
+    /** A step button drawn like the bar, not a chevron from a font. */
+    private static View step(Activity activity, SlothIcons.Kind kind, String description) {
+        SlothIcons view = SlothIcons.of(activity, kind, 18, SlothTheme.ink());
         view.setContentDescription(description);
-        view.setPadding(pixels(activity, 10), pixels(activity, 4),
-                pixels(activity, 10), pixels(activity, 4));
+        int pad = pixels(activity, 8);
+        view.setPadding(pad, pad, pad, pad);
         return view;
     }
 

@@ -90,13 +90,28 @@ to a scratch directory so a change can be looked at before it is installed.
 
 ## State
 
-Last build: **1251**, `versionCode 1251`, signed and promoted; `/releases/latest` in the releases
-repository serves it. Trunk is the app's own 1119 build.
+The shell patches the published **1108** base (`c6cec08107d57ffc9b566051accb54b7df814ffd1ec616a3a59c0a6f2850089e`).
+Signed builds from 1252 on use the key recorded in `docs/RELEASING.md`, and they do not install
+over anything signed before that. 1252 and 1253 are the releases currently published. 1254 is
+the load, address, and first-run work on top of that, not yet published.
+
+What the shell now does with the page, and where it lives so a later chrome can take it:
+
+- `SlothLoad` watches page start, progress, and stop, and keeps the tab's real URL.
+- `SlothAddress` turns that URL into the host the bar shows, and back into the full URL on tap.
+  The lock uses the same URL: `http` is insecure, and a host with the scheme already stripped is not.
+- `SlothFirstRun` notices the welcome screen so the shell stays out of its way.
+  Once the app's `onboardingDone` flag is set, that walk stops.
+- Block screenshots follows the setting, including the window flag.
+- The tab list is the view tagged `tab-squares`, not the bar's tab button.
+- Settings exports and restores the encrypted vault, and says so. Restore asks first,
+  because it replaces bookmarks, history and logins. With no passphrase there is no file,
+  and the export says that instead of pretending it started.
 
 Open, honestly:
 
-- No on-device verification of the last several builds — the phone is the only renderer.
-- The audit of 1223 found and fixed nine faults; `docs/AUDIT.md` lists them with what is still open.
-- Bookmarks/History/Downloads depend on the app drawing into a lent panel; the count decides.
-- No loading progress or real Stop: no progress API is reachable from the shell.
-- `SlothShell` is still one large static class; the split is not done.
+- Bookmarks, History, and Downloads still depend on the app drawing into a lent panel.
+- `SlothShell` is still the chrome. The bar and drawer are due to be replaced behind a switch;
+  the three classes above are the pieces meant to move with that.
+- `docs/AUDIT.md` is the 1223 record. Several of its open items (edge-to-edge, loading progress)
+  have since been done; the rest of that list is still the list.

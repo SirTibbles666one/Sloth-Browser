@@ -104,39 +104,47 @@ final class SlothBoard {
     }
 
     /** Told when a tab is chosen, so the drawer can close itself. */
+    /** The full address last handed to the row. The line shows the host; copy keeps this. */
+    private String fullSite = "";
+
     /** The drawer's head line: where this tab actually is. */
     void onSite(String address) {
         if (site == null) {
             return;
         }
-        String shown = address == null || address.length() == 0 ? "No page open" : address;
-        if (shown.contentEquals(site.getText()) && siteDot != null && siteDot.getBackground() != null) {
+        String full = address == null ? "" : address;
+        String host = SlothAddress.host(full);
+        String shown = host.length() == 0 ? "No page open" : host;
+        String previous = fullSite;
+        fullSite = "No page open".equals(shown) ? "" : full;
+        if (shown.contentEquals(site.getText()) && full.equals(previous)
+                && siteDot != null && siteDot.getBackground() != null) {
             return; // nothing changed: the timer asks every 800 ms
         }
         site.setText(shown);
-        site.setContentDescription("Current page: " + shown + ". Tap to copy the address");
+        site.setContentDescription("Current page: " + fullSite + ". Tap to copy the address");
         if (subTitle != null) {
-            String host = shown;
-            int scheme = host.indexOf("://");
+            String line = shown;
+            int scheme = line.indexOf("://");
             if (scheme >= 0) {
-                host = host.substring(scheme + 3);
+                line = line.substring(scheme + 3);
             }
-            int slash = host.indexOf('/');
+            int slash = line.indexOf('/');
             if (slash > 0) {
-                host = host.substring(0, slash);
+                line = line.substring(0, slash);
             }
-            boolean none = host.length() == 0 || host.startsWith("No page");
-            subTitle.setText(none ? "DASHBOARD" : host.toUpperCase(Locale.UK));
+            boolean none = line.length() == 0 || line.startsWith("No page");
+            subTitle.setText(none ? "DASHBOARD" : line.toUpperCase(Locale.UK));
         }
         if (site.getParent() instanceof View) {
-            ((View) site.getParent()).setContentDescription("Current page: " + shown
+            ((View) site.getParent()).setContentDescription("Current page: " + fullSite
                     + ". Tap to copy the address");
         }
         if (siteDot != null) {
             int colour = SlothTheme.muted();
-            if (shown.startsWith("https://")) {
+            if (full.startsWith("https://")) {
                 colour = SlothTheme.accent();
-            } else if (shown.startsWith("http://")) {
+            } else if (full.startsWith("http://")) {
                 colour = 0xFFE2A05A;
             }
             android.graphics.drawable.GradientDrawable dot = new android.graphics.drawable.GradientDrawable();
@@ -148,7 +156,7 @@ final class SlothBoard {
 
     /** Put the address on the clipboard, and say so - silence after a tap reads as a bug. */
     private void copyAddress(Activity activity) {
-        CharSequence value = site == null ? null : site.getText();
+        CharSequence value = fullSite.length() > 0 ? fullSite : (site == null ? null : site.getText());
         if (value == null || value.length() == 0 || "No page open".contentEquals(value)) {
             return;
         }
