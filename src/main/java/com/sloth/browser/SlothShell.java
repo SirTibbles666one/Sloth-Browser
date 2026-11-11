@@ -198,7 +198,7 @@ public final class SlothShell {
     private static SlothDrag stripDrag;
     private static View barWrapView;
     private static View fwdGlyph;
-    private static TextView clearTag;
+    private static View clearTag;
     private static TextView TabFace;
     private static float downY;
     private static float startH;
@@ -2668,6 +2668,7 @@ public final class SlothShell {
                     clearTag.setVisibility(hasFocus && input.getText().length() > 0
                             ? View.VISIBLE : View.GONE);
                 }
+                paintAddressLock(lock, input);
             }
         });
         pill.addView(input);
@@ -2727,11 +2728,9 @@ public final class SlothShell {
             }
         });
 
-        final TextView clear = new TextView(activity);
-        clear.setText("\u00D7");
-        clear.setTextSize(TypedValue.COMPLEX_UNIT_SP, 15f);
-        clear.setTextColor(DIM);
-        clear.setGravity(Gravity.CENTER);
+        // a drawn cross, same as the rest of the bar. A text times-sign sits on a
+        // baseline and arrives as a different weight from the icons beside it
+        final SlothIcons clear = SlothIcons.of(activity, SlothIcons.Kind.CLOSE, 16, DIM);
         clear.setContentDescription("Clear the address");
         clear.setLayoutParams(new LinearLayout.LayoutParams(dp(activity, 28), dp(activity, 28)));
         clear.setVisibility(View.GONE);
@@ -2753,29 +2752,7 @@ public final class SlothShell {
                 if (clearTag != null) {
                     clearTag.setVisibility(input.hasFocus() && s.length() > 0 ? View.VISIBLE : View.GONE);
                 }
-                if (lock != null) {
-                    boolean ok = secure(s.toString());
-                    // on a new tab the field is a search box: a padlock there claims a
-                    // security state for a page that does not exist yet, so the slot holds
-                    // a magnifier until there is an address to be secure about
-                    boolean address = looksLikeAddress(s.toString());
-                    lock.kind(address ? SlothIcons.Kind.LOCK : SlothIcons.Kind.SEARCH);
-                    lock.setClickable(address);
-                    lock.setFocusable(address);
-                    if (!address) {
-                        lock.tint(SlothTheme.muted());
-                        lock.setContentDescription("Search");
-                        return;
-                    }
-                    // the lock is a lock; an insecure address is said, not painted - a
-                    // second symbol in the same place would just look like a broken lock.
-                    // The colour is the warning: ink when the address is secure, amber when
-                    // it is not, and the description says which
-                    lock.tint(ok ? SlothTheme.dim() : 0xFFE2A05A);
-                    lock.setContentDescription(ok
-                            ? "Site settings, secure connection"
-                            : "Site settings, not a secure address");
-                }
+                paintAddressLock(lock, input);
             }
 
             public void afterTextChanged(android.text.Editable s) {
@@ -2859,10 +2836,49 @@ public final class SlothShell {
         }
     }
 
-    /** https and about: are the quiet ones; plain text is not a secure origin. */
-    private static boolean secure(String url) {
+    /**
+     * Whether the lock should say the connection is secure.
+     *
+     * <p>{@code https} and {@code about:} are. An explicit {@code http} address is not.
+     * The omnibox drops the scheme once a page is showing, so a host on its own
+     * ("example.com") is that display, not a typed insecure URL. While the field is
+     * being edited there is no page yet, and a bare host is not vouched for.</p>
+     */
+    static boolean secureShown(String url, boolean editing) {
         String u = url == null ? "" : url.trim().toLowerCase(java.util.Locale.UK);
-        return u.startsWith("https://") || u.startsWith("about:") || u.length() == 0;
+        if (u.length() == 0 || u.startsWith("https://") || u.startsWith("about:")) {
+            return true;
+        }
+        if (u.startsWith("http://")) {
+            return false;
+        }
+        return !editing && looksLikeAddress(u);
+    }
+
+    /** The lock follows the field: a magnifier until there is a host, then ink or amber. */
+    private static void paintAddressLock(SlothIcons lock, EditText input) {
+        if (lock == null || input == null) {
+            return;
+        }
+        String text = input.getText() == null ? "" : input.getText().toString();
+        // on a new tab the field is a search box: a padlock there claims a
+        // security state for a page that does not exist yet
+        boolean address = looksLikeAddress(text);
+        lock.kind(address ? SlothIcons.Kind.LOCK : SlothIcons.Kind.SEARCH);
+        lock.setClickable(address);
+        lock.setFocusable(address);
+        if (!address) {
+            lock.tint(SlothTheme.muted());
+            lock.setContentDescription("Search");
+            return;
+        }
+        // the lock is a lock; an insecure address is said, not painted as a second
+        // symbol. Ink when secure, amber when not, and the description says which
+        boolean ok = secureShown(text, input.hasFocus());
+        lock.tint(ok ? SlothTheme.dim() : 0xFFE2A05A);
+        lock.setContentDescription(ok
+                ? "Site settings, secure connection"
+                : "Site settings, not a secure address");
     }
 
     /**
@@ -3789,6 +3805,11 @@ public final class SlothShell {
         } catch (RuntimeException ignored) {
             return 1080;
         }
+    }
+
+    /** Status bar plus the floating bar, so a full-screen page can start below both. */
+    static int topChromePx(Activity activity) {
+        return statusBarHeight(activity) + dp(activity, 72);
     }
 
     private static int statusBarHeight(Activity activity) {

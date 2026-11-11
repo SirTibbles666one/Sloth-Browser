@@ -76,8 +76,13 @@ public class SlothShellTest {
         public final com.sloth.browser.engine.SlothSettings settings =
                 new com.sloth.browser.engine.SlothSettings();
         public int settingsSaved;
+        /** When set, saveSettings fails the way a full disk or a refused write does. */
+        public boolean refuseSave;
 
         private void saveSettings() {
+            if (refuseSave) {
+                throw new IllegalStateException("refused");
+            }
             settingsSaved++;
         }
 
@@ -1942,6 +1947,107 @@ public class SlothShellTest {
         assertTrue("and it is the way into site settings",
                 String.valueOf(findLock(overlayOf(activity)).getContentDescription())
                         .startsWith("Site settings"));
+    }
+
+    /** The omnibox shows the host alone. That is not an http address. */
+    @Test
+    public void theOmniboxHostIsNotCalledInsecure() {
+        TestActivity activity = build();
+        SlothShell.own(activity);
+        EditText shown = findAddress(overlayOf(activity));
+        shown.clearFocus();
+        shown.setText("example.com");
+        org.robolectric.shadows.ShadowLooper.idleMainLooper();
+
+        SlothIcons lock = (SlothIcons) findLock(overlayOf(activity));
+        assertEquals("a host with the scheme stripped is the page, not http",
+                SlothTheme.dim(), lock.colour());
+        assertTrue(String.valueOf(lock.getContentDescription()).contains("secure connection"));
+
+        shown.requestFocus();
+        shown.setText("example.com");
+        org.robolectric.shadows.ShadowLooper.idleMainLooper();
+        assertEquals("while it is being typed, a bare host is not vouched for",
+                0xFFE2A05A, ((SlothIcons) findLock(overlayOf(activity))).colour());
+    }
+
+    /** A refused save must not paint a number the browser did not keep. */
+    @Test
+    public void aRefusedTextZoomStaysOnTheOldNumber() {
+        TestActivity activity = build();
+        activity.refuseSave = true;
+        SlothShell.own(activity);
+        SlothShell.openSettingsPage(activity);
+        settle();
+        View page = findByViewTag(overlayOf(activity), "settings-page");
+
+        tapChip(page, "Text zoom");
+        settle();
+
+        assertEquals("the model keeps 100", 100L, activity.settings.textZoom);
+        assertNotNull("the row still says 100%", findChip(page, "100%"));
+        assertNull("125% was not saved, so it is not shown", findChip(page, "125%"));
+        assertTrue(SlothLog.text().contains("could not save textZoom"));
+    }
+
+    /** Back, the row pointer and the address clear are drawn, not typed. */
+    @Test
+    public void settingsBackAndTheAddressClearAreDrawn() {
+        TestActivity activity = build();
+        SlothShell.own(activity);
+        SlothShell.openSettingsPage(activity);
+        settle();
+        View page = findByViewTag(overlayOf(activity), "settings-page");
+
+        View back = findTagged(page, "Back to the drawer");
+        assertTrue("settings back is a drawn chevron", back instanceof SlothIcons);
+        assertEquals(SlothIcons.Kind.BACK, ((SlothIcons) back).kind());
+        assertEquals("Saved with the browser.",
+                ((android.widget.TextView) findByViewTag(page, "settings-intro")).getText().toString());
+
+        View label = findChip(page, "Palette");
+        View row = label;
+        while (row != null && !"settings-row".equals(String.valueOf(row.getTag()))) {
+            row = row.getParent() instanceof View ? (View) row.getParent() : null;
+        }
+        final boolean[] forward = new boolean[1];
+        walk(row, new ViewVisitor() {
+            @Override
+            public void visit(View v) {
+                if (v instanceof SlothIcons
+                        && ((SlothIcons) v).kind() == SlothIcons.Kind.FORWARD) {
+                    forward[0] = true;
+                }
+                if (v instanceof android.widget.TextView
+                        && "\u203a".contentEquals(((android.widget.TextView) v).getText())) {
+                    forward[0] = false;
+                }
+            }
+        });
+        assertTrue("a row points with a drawn chevron", forward[0]);
+
+        EditText address = findAddress(overlayOf(activity));
+        address.requestFocus();
+        address.setText("https://example.com");
+        org.robolectric.shadows.ShadowLooper.idleMainLooper();
+        View clear = findTagged(overlayOf(activity), "Clear the address");
+        assertTrue("clear is a drawn cross", clear instanceof SlothIcons);
+        assertEquals(SlothIcons.Kind.CLOSE, ((SlothIcons) clear).kind());
+        assertEquals(View.VISIBLE, clear.getVisibility());
+    }
+
+    /** The title and Back have to clear the status bar and the shell bar. */
+    @Test
+    public void settingsHeaderClearsTheBar() {
+        TestActivity activity = build();
+        SlothShell.own(activity);
+        SlothShell.openSettingsPage(activity);
+        settle();
+        View page = findByViewTag(overlayOf(activity), "settings-page");
+        android.widget.ScrollView scroller = (android.widget.ScrollView) ((android.view.ViewGroup) page).getChildAt(0);
+        View column = scroller.getChildAt(0);
+        assertTrue("the header starts below the bar, not under it: " + column.getPaddingTop(),
+                column.getPaddingTop() >= SlothShell.topChromePx(activity));
     }
 
     private View findLock(View root) {
@@ -4565,7 +4671,15 @@ public class SlothShellTest {
         assertNotNull("the bar is there", bar);
         java.util.List<View> drawn = new java.util.ArrayList<>();
         collectKind(bar, SlothIcons.class, drawn);
-        assertEquals("back, forward, reload, plus, menu, the lock and the tab stack: " + drawn, 7, drawn.size());
+        int crosses = 0;
+        for (View icon : drawn) {
+            if (((SlothIcons) icon).kind() == SlothIcons.Kind.CLOSE) {
+                crosses++;
+            }
+        }
+        assertEquals("the address clear is a drawn cross", 1, crosses);
+        assertEquals("back, forward, reload, plus, menu, the lock, the tab stack and the clear: "
+                + drawn, 8, drawn.size());
 
         // and no glyph is left behind them: the old bars were text characters
         java.util.List<View> glyphs = new java.util.ArrayList<>();
