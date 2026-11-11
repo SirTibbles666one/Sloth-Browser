@@ -296,13 +296,12 @@ public final class SlothShell {
      * Try the binding, then the tag, then infer the parent of the chip-tagged views.
      */
     static ViewGroup resolveStrip(Activity activity) {
-        View binding = resolve(activity, "slotTabs");
-        if (binding instanceof ViewGroup && ((ViewGroup) binding).getChildCount() > 0) {
-            return (ViewGroup) binding;
-        }
         View root = activity.getWindow().getDecorView();
+        // the real strip is tagged tab-squares. slotTabs in the 1108 base is the bar's
+        // tab button, which also has children (the mark and the count), so preferring
+        // the binding paints those as if they were open tabs
         View tagged = byTagDeep(root, "tab-squares");
-        if (tagged instanceof ViewGroup && ((ViewGroup) tagged).getChildCount() > 0) {
+        if (tagged instanceof ViewGroup && holdsTabs((ViewGroup) tagged)) {
             return (ViewGroup) tagged;
         }
         // last resort: whichever container holds the views the app tags "tab"
@@ -316,7 +315,34 @@ public final class SlothShell {
                 bestCount = e.getValue();
             }
         }
-        return best;
+        if (best != null) {
+            return best;
+        }
+        View binding = resolve(activity, "slotTabs");
+        if (binding instanceof ViewGroup && holdsTabs((ViewGroup) binding)) {
+            return (ViewGroup) binding;
+        }
+        return null;
+    }
+
+    /** A strip holds tab chips. The bar's tab button has children too, and they are not tabs. */
+    private static boolean holdsTabs(ViewGroup group) {
+        if (group.getChildCount() == 0) {
+            return false;
+        }
+        if ("tab-squares".equals(String.valueOf(group.getTag()))) {
+            return true;
+        }
+        for (int i = 0; i < group.getChildCount(); i++) {
+            View child = group.getChildAt(i);
+            if ("tab".equals(String.valueOf(child.getTag()))) {
+                return true;
+            }
+            if (byTagDeep(child, "close") != null) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private static void collectTagParents(View view, String tag, java.util.Map<ViewGroup, Integer> counts) {
@@ -505,6 +531,7 @@ public final class SlothShell {
         diagPage = null;
         clearTag = null;
         committedUrl = "";
+        tabChipView = null;
         loadTrack = null;
         loadLine = null;
         TabFace = null;
@@ -552,6 +579,7 @@ public final class SlothShell {
         gen++;
         animating = false;
         lastProbe = 0;
+        onboardingFinished = false;
         SlothCover.forget();
         owner = null;
     }
@@ -561,6 +589,10 @@ public final class SlothShell {
             @Override
             public void changed() {
                 paintLoad();
+                paintLock();
+                if (owner != null) {
+                    mirrorAddress(owner);
+                }
             }
         });
         try {
@@ -573,7 +605,7 @@ public final class SlothShell {
             // or every measurement below describes the old window
             requestEdgeToEdge(activity);
         }
-            guardOff(activity);
+            applyScreenGuard(activity);
             if (overlay == null) {
                 // nothing is attached: any loop still running belongs to a dead shell
                 stopLoops();
@@ -1238,12 +1270,24 @@ public final class SlothShell {
         return null;
     }
 
+    private static View tabChipView;
+
+    private static void describeTabs(int count) {
+        if (tabChipView == null) {
+            return;
+        }
+        int n = Math.max(0, count);
+        tabChipView.setContentDescription(n == 1 ? "1 tab" : n + " tabs");
+    }
+
     /** A count you can tap, so the drawer is not only reachable by the handle. */
     private static View tabChip(final Activity activity) {
         LinearLayout chip = new LinearLayout(activity);
+        tabChipView = chip;
         chip.setOrientation(LinearLayout.HORIZONTAL);
         chip.setGravity(Gravity.CENTER);
-        chip.setContentDescription("Tabs");
+        chip.setContentDescription("1 tab");
+        describeTabs(1);
         chip.setClickable(true);
         chip.setFocusable(true);
         chip.setBackground(pressState(activity));
@@ -1660,15 +1704,15 @@ public final class SlothShell {
             field.setText(url);
             field.setSelection(field.getText().length());
             if (navigate(activity, field)) {
-                SlothLog.note("library opened " + url);
+                SlothLog.note("library opened " + SlothAddress.host(url));
                 return;
             }
         }
         try {
             call(activity, "go", new Class<?>[]{String.class}, new Object[]{url});
-            SlothLog.note("library opened " + url + " (direct)");
+            SlothLog.note("library opened " + SlothAddress.host(url) + " (direct)");
         } catch (Throwable t) {
-            SlothLog.note("library could not open " + url + ": " + t.getClass().getSimpleName());
+            SlothLog.note("library could not open a page: " + t.getClass().getSimpleName());
             openDrawer(activity);
         }
     }
@@ -1921,39 +1965,22 @@ public final class SlothShell {
     }
 
     /**
-     * Screen privacy off, once.
-     *
-     * <p>The browser ships with screenshots blocked, which also blocks a person from
-     * showing anyone what they are looking at - including this shell's own screens when
-     * something looks wrong. It is cleared once per install and remembered, so turning it
-     * back on by hand in Screen settings sticks instead of being undone at every launch.</p>
+     * Block screenshots exactly when the setting says so. The window flag is what
+     * blanks a capture; the switch in Settings is only the record of it.
      */
-    static boolean guardOff(Activity activity) {
-        boolean done = false;
+    static void applyScreenGuard(Activity activity) {
+        boolean on = SlothPrefs.flag(activity, "screenGuard", true);
         try {
-            android.content.SharedPreferences prefs =
-                    activity.getSharedPreferences("slothworks", android.content.Context.MODE_PRIVATE);
-            if (!prefs.getBoolean("screenGuardCleared", false)) {
-                Object settings = settingsObject(activity);
-                if (settings != null) {
-                    java.lang.reflect.Field guard = settings.getClass().getDeclaredField("screenGuard");
-                    guard.setAccessible(true);
-                    guard.setBoolean(settings, false);
-                    call(activity, "saveSettings", new Class[]{}, new Object[]{});
-                    done = true;
-                    if (done) {
-                        prefs.edit().putBoolean("screenGuardCleared", true).apply();
-                    }
-                }
+            if (on) {
+                activity.getWindow().addFlags(
+                        android.view.WindowManager.LayoutParams.FLAG_SECURE);
+            } else {
+                activity.getWindow().clearFlags(
+                        android.view.WindowManager.LayoutParams.FLAG_SECURE);
             }
         } catch (Throwable t) {
-            SlothLog.note("could not clear the screen guard: " + t.getClass().getSimpleName());
+            SlothLog.note("could not apply the secure flag: " + t.getClass().getSimpleName());
         }
-        try {
-            activity.getWindow().clearFlags(android.view.WindowManager.LayoutParams.FLAG_SECURE);
-        } catch (Throwable ignored) {
-        }
-        return done;
     }
 
     /** The app's settings model, found by type - its field name is the app's business. */
@@ -2333,8 +2360,10 @@ public final class SlothShell {
                             + ", settled at " + traceTo + "px")
                     .append('\n');
             View url = resolve(activity, "urlBar");
-            out.append("url: ").append(url instanceof TextView
-                    ? String.valueOf(((TextView) url).getText()) : "(no omnibox)").append('\n');
+            String shown = url instanceof TextView
+                    ? String.valueOf(((TextView) url).getText()) : "";
+            out.append("host: ").append(shown.length() == 0 ? "(no omnibox)"
+                    : SlothAddress.host(shown)).append('\n');
             out.append("tabs: ").append(tabCount(activity)).append('\n');
         } catch (Throwable t) {
             out.append("shell state failed: ").append(t.getClass().getSimpleName()).append('\n');
@@ -2599,9 +2628,47 @@ public final class SlothShell {
         return SlothAddress.host(raw);
     }
 
-    /** What the omnibox last said, in full. The field may be showing only the host. */
+    /** The URL go() will receive. The field may be showing only the host. */
     static String committedUrl() {
         return committedUrl;
+    }
+
+    /**
+     * The current tab's URL, scheme included. The omnibox's own display() has already
+     * reduced every address to its host, so this is the copy that still has a path.
+     */
+    private static String tabUrl(Activity activity) {
+        if (activity == null) {
+            return "";
+        }
+        try {
+            String page = SlothLoad.pageUrl(SlothFind.session(activity));
+            if (page != null && (page.indexOf("://") >= 0 || page.startsWith("about:"))) {
+                return page;
+            }
+        } catch (Throwable ignored) {
+            // no session yet
+        }
+        return "";
+    }
+
+    /** Rest the field on the tab's URL when we have one, otherwise on the omnibox. */
+    private static void mirrorAddress(Activity activity) {
+        if (address == null || address.hasFocus()) {
+            return;
+        }
+        String page = tabUrl(activity);
+        if (page.length() > 0) {
+            showAddress(page);
+            return;
+        }
+        View real = resolve(activity, "urlBar");
+        if (real instanceof EditText) {
+            CharSequence text = ((EditText) real).getText();
+            if (text != null) {
+                showAddress(text.toString());
+            }
+        }
     }
 
     /** Show {@code full} as a host while the field is resting. */
@@ -2704,9 +2771,14 @@ public final class SlothShell {
             @Override
             public void onFocusChange(View v, boolean hasFocus) {
                 String visible = input.getText() == null ? "" : input.getText().toString();
+                String page = tabUrl(activity);
+                String full = page.length() > 0 ? page : committedUrl;
+                if (hasFocus && page.length() > 0) {
+                    committedUrl = page;
+                }
                 String next = hasFocus
-                        ? SlothAddress.focused(committedUrl, visible)
-                        : SlothAddress.blurred(committedUrl, visible);
+                        ? SlothAddress.focused(full, visible)
+                        : SlothAddress.blurred(full, visible);
                 if (!next.contentEquals(visible)) {
                     input.setText(next);
                     if (hasFocus) {
@@ -2888,22 +2960,45 @@ public final class SlothShell {
     }
 
     /**
-     * Whether the lock should say the connection is secure.
-     *
-     * <p>{@code https} and {@code about:} are. An explicit {@code http} address is not.
-     * The omnibox drops the scheme once a page is showing, so a host on its own
-     * ("example.com") is that display, not a typed insecure URL. While the field is
-     * being edited there is no page yet, and a bare host is not vouched for.</p>
+     * Whether the lock should say the connection is secure. Only a real URL counts.
+     * A host with the scheme already stripped is not evidence: the field does that
+     * to http and https alike.
      */
     static boolean secureShown(String url, boolean editing) {
-        String u = url == null ? "" : url.trim().toLowerCase(java.util.Locale.UK);
-        if (u.length() == 0 || u.startsWith("https://") || u.startsWith("about:")) {
-            return true;
+        return SlothAddress.secure(url);
+    }
+
+    /** The URL that decides the lock: the session's page, else a string that still has a scheme. */
+    private static String securityUrl(EditText input) {
+        Activity activity = input.getContext() instanceof Activity
+                ? (Activity) input.getContext() : owner;
+        if (activity != null) {
+            String page = tabUrl(activity);
+            if (page.length() > 0) {
+                return page;
+            }
         }
-        if (u.startsWith("http://")) {
-            return false;
+        if (committedUrl.indexOf("://") >= 0 || committedUrl.startsWith("about:")) {
+            return committedUrl;
         }
-        return !editing && looksLikeAddress(u);
+        String typed = input.getText() == null ? "" : input.getText().toString();
+        if (typed.indexOf("://") >= 0 || typed.startsWith("about:")) {
+            return typed;
+        }
+        return "";
+    }
+
+    private static void paintLock() {
+        if (!(address instanceof EditText) || !(address.getParent() instanceof ViewGroup)) {
+            return;
+        }
+        ViewGroup pill = (ViewGroup) address.getParent();
+        for (int i = 0; i < pill.getChildCount(); i++) {
+            if (pill.getChildAt(i) instanceof SlothIcons) {
+                paintAddressLock((SlothIcons) pill.getChildAt(i), (EditText) address);
+                return;
+            }
+        }
     }
 
     /** The lock follows the field: a magnifier until there is a host, then ink or amber. */
@@ -2924,8 +3019,9 @@ public final class SlothShell {
             return;
         }
         // the lock is a lock; an insecure address is said, not painted as a second
-        // symbol. Ink when secure, amber when not, and the description says which
-        boolean ok = secureShown(text, input.hasFocus());
+        // symbol. Ink when secure, amber when not, and the description says which.
+        // The colour comes from the real URL, never from the stripped host in the field.
+        boolean ok = SlothAddress.secure(securityUrl(input));
         lock.tint(ok ? SlothTheme.dim() : 0xFFE2A05A);
         lock.setContentDescription(ok
                 ? "Site settings, secure connection"
@@ -3858,9 +3954,24 @@ public final class SlothShell {
         }
     }
 
-    /** Status bar plus the floating bar, so a full-screen page can start below both. */
+    /**
+     * Status bar plus the floating bar, so a full-screen page can start below both.
+     * The bar is measured when it has been laid out; 72dp is only the stand-in before that.
+     */
     static int topChromePx(Activity activity) {
-        return statusBarHeight(activity) + dp(activity, 72);
+        int chrome = 0;
+        if (barView != null && barView.getHeight() > 0) {
+            chrome = barView.getHeight();
+            View parent = barView.getParent() instanceof View ? (View) barView.getParent() : null;
+            if (parent != null && parent.getLayoutParams() instanceof ViewGroup.MarginLayoutParams) {
+                chrome += ((ViewGroup.MarginLayoutParams) parent.getLayoutParams()).topMargin;
+            }
+            chrome += dp(activity, 8);
+        }
+        if (chrome == 0) {
+            chrome = dp(activity, 72);
+        }
+        return statusBarHeight(activity) + chrome;
     }
 
     private static int statusBarHeight(Activity activity) {
@@ -3997,12 +4108,48 @@ public final class SlothShell {
         return showing;
     }
 
-    /** The app's welcome screen. The shell only asks; {@link SlothFirstRun} answers. */
+    /** Set once {@code onboardingDone} is true, so the tick stops walking the tree. */
+    private static boolean onboardingFinished;
+
+    /** How many times this process still scanned for the welcome screen. The harness reads it. */
+    static int firstRunScansForTest;
+
+    /**
+     * The app's welcome screen. The shell only asks; {@link SlothFirstRun} answers.
+     * Once the app's own {@code onboardingDone} flag is set, the answer is no and
+     * the tree is not walked again.
+     */
     static boolean firstRunShowing(Activity activity) {
-        if (activity == null) {
+        if (activity == null || onboardingFinished) {
             return false;
         }
+        if (onboardingDone(activity)) {
+            onboardingFinished = true;
+            return false;
+        }
+        firstRunScansForTest++;
         return SlothFirstRun.showing(activity.findViewById(android.R.id.content));
+    }
+
+    /** The base settings flag. A missing one means we still have to look at the screen. */
+    private static boolean onboardingDone(Activity activity) {
+        Object settings = settingsObject(activity);
+        if (settings == null) {
+            return false;
+        }
+        try {
+            java.lang.reflect.Method done = settings.getClass().getMethod("getOnboardingDone");
+            Object value = done.invoke(settings);
+            return value instanceof Boolean && (Boolean) value;
+        } catch (Throwable ignored) {
+            try {
+                java.lang.reflect.Field field = settings.getClass().getDeclaredField("onboardingDone");
+                field.setAccessible(true);
+                return field.getBoolean(settings);
+            } catch (Throwable missing) {
+                return false;
+            }
+        }
     }
 
     /** The line under the bar, from the current session's progress. Hidden when idle. */
@@ -4049,13 +4196,7 @@ public final class SlothShell {
             blockForFirstRun(activity);
             SlothLoad.watch(activity);
             paintLoad();
-            View real = resolve(activity, "urlBar");
-            if (real instanceof EditText && address != null && !address.hasFocus()) {
-                CharSequence text = ((EditText) real).getText();
-                if (text != null) {
-                    showAddress(text.toString());
-                }
-            }
+            mirrorAddress(activity);
             // the app can leave the page at zero height on its own - a restart, a cleared
             // engine - and a black window with an address in it is the worst thing to hand
             // someone silently, so the tick checks rather than waits for a report
@@ -4072,6 +4213,7 @@ public final class SlothShell {
             if (TabFace != null && !String.valueOf(count).contentEquals(TabFace.getText())) {
                 TabFace.setText(String.valueOf(count));
             }
+            describeTabs(count);
             if (board != null) {
                 board.onTabCount(count);
                 if (peekShowing) {
@@ -4094,13 +4236,7 @@ public final class SlothShell {
     private static void refresh(Activity activity) {
         try {
             ensurePageVisible(activity);
-            View real = resolve(activity, "urlBar");
-            if (real instanceof EditText && address != null && !address.hasFocus()) {
-                CharSequence text = ((EditText) real).getText();
-                if (text != null) {
-                    showAddress(text.toString());
-                }
-            }
+            mirrorAddress(activity);
             SlothLoad.watch(activity);
             paintLoad();
             blockForFirstRun(activity);
@@ -4111,6 +4247,7 @@ public final class SlothShell {
             if (TabFace != null) {
                 TabFace.setText(String.valueOf(tabCount(activity)));
             }
+            describeTabs(tabCount(activity));
             if (board != null) {
                 board.onSite(thisSite(activity));
             board.onTabCount(tabCount(activity));

@@ -74,6 +74,19 @@ final class SlothAddress {
         return showing;
     }
 
+    /**
+     * Whether a connection is one we will call secure. Only a real URL counts:
+     * {@code https} and {@code about:} are, {@code http} is not, and a host with the
+     * scheme already stripped is not evidence either way.
+     */
+    static boolean secure(String url) {
+        if (url == null) {
+            return false;
+        }
+        String u = url.trim().toLowerCase(java.util.Locale.UK);
+        return u.startsWith("https://") || u.startsWith("about:");
+    }
+
     /** The field lost focus. The full URL collapses back to the host; an edit stays. */
     static String blurred(String full, String visible) {
         String committed = full == null ? "" : full;

@@ -22,6 +22,15 @@ import static org.junit.Assert.assertTrue;
 public class SlothPartsTest {
 
     @Test
+    public void httpIsNotSecureAndABareHostIsNotEither() {
+        assertFalse(SlothAddress.secure("http://example.com/"));
+        assertFalse(SlothAddress.secure("example.com"));
+        assertFalse(SlothAddress.secure(""));
+        assertTrue(SlothAddress.secure("https://example.com/"));
+        assertTrue(SlothAddress.secure("about:blank"));
+    }
+
+    @Test
     public void theHostIsWhatTheBarShows() {
         assertEquals("example.org",
                 SlothAddress.host("https://user@example.org:8443/page?q=1"));
@@ -69,6 +78,7 @@ public class SlothPartsTest {
         hooked.onPageStart(session, "https://example.com/");
         assertTrue(forwarded[0]);
         assertEquals(8, SlothLoad.shown(session));
+        assertEquals("https://example.com/", SlothLoad.pageUrl(session));
         hooked.onProgressChange(session, 60);
         assertEquals(60, SlothLoad.shown(session));
 

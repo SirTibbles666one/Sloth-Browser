@@ -128,8 +128,21 @@ final class SlothSettings {
         section(activity, column, "DATA");
         action(activity, column, "Export settings", "a file you can keep", "exportSettings");
         action(activity, column, "Import settings", "restore from that file", "importSettings");
-        action(activity, column, "Export bookmarks", "bookmarks and history", "exportVault");
-        action(activity, column, "Import bookmarks", "bring a vault back", "importVault");
+        // these two are the encrypted vault, not a bookmark file. Import replaces it.
+        row(activity, column, "Export vault", "bookmarks, history and logins, encrypted",
+                new View.OnClickListener() {
+                    @Override
+                    public void onClick(View v) {
+                        exportVault(activity);
+                    }
+                });
+        row(activity, column, "Restore vault", "replaces the vault on this phone",
+                new View.OnClickListener() {
+                    @Override
+                    public void onClick(View v) {
+                        confirmRestore(activity);
+                    }
+                });
         action(activity, column, "Clear browsing data", "asks before it deletes", "clearData");
 
         section(activity, column, "ENGINE");
@@ -252,6 +265,9 @@ final class SlothSettings {
                         }
                         current[0] = wanted;
                         paintSwitch(activity, track, current[0]);
+                        if ("screenGuard".equals(field)) {
+                            SlothShell.applyScreenGuard(activity);
+                        }
                         v.setContentDescription(
                                 current[0] ? v.getContentDescription().toString()
                                         .replace(", off", ", on")
@@ -335,6 +351,100 @@ final class SlothSettings {
         return value + suffix;
     }
 
+    /**
+     * Export is the encrypted vault file, and the base writes nothing when that file
+     * does not exist yet. Saying the export started in that case is how it used to
+     * fail without anyone noticing.
+     */
+    private static void exportVault(Activity activity) {
+        if (!vaultPresent(activity)) {
+            new android.app.AlertDialog.Builder(activity)
+                    .setTitle("No vault")
+                    .setMessage("There is no vault to export. Create one with a passphrase first. Nothing was saved.")
+                    .setPositiveButton("OK", null)
+                    .show();
+            return;
+        }
+        boolean ok = call(activity, "exportVault");
+        android.widget.Toast.makeText(activity,
+                ok ? "Choose where to save the vault." : "Export vault is not available",
+                android.widget.Toast.LENGTH_SHORT).show();
+    }
+
+    /**
+     * Restore replaces the vault. The base method opens a file picker and then
+     * overwrites bookmarks, history and logins together, so the warning comes first.
+     */
+    private static void confirmRestore(final Activity activity) {
+        new android.app.AlertDialog.Builder(activity)
+                .setTitle("Restore vault?")
+                .setMessage("This replaces bookmarks, history, logins and everything else "
+                        + "saved on this phone. What is here now is overwritten, not merged.")
+                .setPositiveButton("Restore", new android.content.DialogInterface.OnClickListener() {
+                    @Override
+                    public void onClick(android.content.DialogInterface dialog, int which) {
+                        boolean ok = call(activity, "importVault");
+                        android.widget.Toast.makeText(activity,
+                                ok ? "Pick a vault file. It will replace this one."
+                                        : "Restore vault is not available",
+                                android.widget.Toast.LENGTH_SHORT).show();
+                    }
+                })
+                .setNegativeButton("Cancel", null)
+                .show();
+    }
+
+    /** True when the app already has a vault file. A missing passphrase means there is no file. */
+    static boolean vaultPresent(Activity activity) {
+        Object vault = vaultOf(activity);
+        if (vault == null) {
+            return false;
+        }
+        try {
+            java.lang.reflect.Method has = vault.getClass().getMethod("hasVault");
+            Object ready = has.invoke(vault);
+            if (ready instanceof Boolean) {
+                return (Boolean) ready;
+            }
+        } catch (Throwable ignored) {
+            // older vaults only expose the bytes
+        }
+        try {
+            java.lang.reflect.Method bytes = vault.getClass().getMethod("vaultBytes");
+            Object raw = bytes.invoke(vault);
+            return raw instanceof byte[] && ((byte[]) raw).length > 0;
+        } catch (Throwable ignored) {
+            return false;
+        }
+    }
+
+    private static Object vaultOf(Activity activity) {
+        Object fromApp = invoke(activity.getApplication(), "getVault");
+        if (fromApp != null) {
+            return fromApp;
+        }
+        return invoke(activity, "getVault");
+    }
+
+    private static Object invoke(Object target, String name) {
+        if (target == null) {
+            return null;
+        }
+        Class<?> type = target.getClass();
+        while (type != null) {
+            try {
+                java.lang.reflect.Method method = type.getDeclaredMethod(name);
+                method.setAccessible(true);
+                return method.invoke(target);
+            } catch (NoSuchMethodException e) {
+                type = type.getSuperclass();
+            } catch (Throwable ignored) {
+                return null;
+            }
+        }
+        return null;
+    }
+
     /** A row that calls one of the browser's private methods. */
     private static void action(final Activity activity, LinearLayout column, String name,
                                String note, final String method) {
@@ -359,10 +469,10 @@ final class SlothSettings {
             return "Pick a settings file";
         }
         if ("exportVault".equals(method)) {
-            return "Bookmarks export started";
+            return "Choose where to save the vault.";
         }
         if ("importVault".equals(method)) {
-            return "Pick a vault file";
+            return "Pick a vault file. It will replace this one.";
         }
         if ("clearData".equals(method)) {
             return "Choose what to clear";

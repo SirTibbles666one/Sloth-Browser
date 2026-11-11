@@ -26,6 +26,8 @@ final class SlothLoad {
     }
 
     private static final Map<Object, int[]> PROGRESS = new WeakHashMap<>();
+    /** The URL the engine reported for the page, scheme included. */
+    private static final Map<Object, String> PAGE = new WeakHashMap<>();
     /** -1 means the line is hidden. Otherwise 0 to 100. */
     private static final int HIDDEN = -1;
     private static Listener listener;
@@ -67,6 +69,9 @@ final class SlothLoad {
                         public Object invoke(Object p, Method method, Object[] args) throws Throwable {
                             String name = method.getName();
                             if ("onPageStart".equals(name)) {
+                                if (args != null && args.length >= 2 && args[1] instanceof String) {
+                                    remember(key, (String) args[1]);
+                                }
                                 note(key, 8, true);
                             } else if ("onProgressChange".equals(name) && args != null
                                     && args.length >= 2 && args[1] instanceof Number) {
@@ -90,6 +95,26 @@ final class SlothLoad {
             set.invoke(session, proxy);
         } catch (Throwable ignored) {
             // a session without this delegate still loads; it just has no bar
+        }
+    }
+
+    /** The page URL last reported for this session, or empty. The scheme is still on it. */
+    static String pageUrl(Object session) {
+        if (session == null) {
+            return "";
+        }
+        synchronized (PAGE) {
+            String url = PAGE.get(session);
+            return url == null ? "" : url;
+        }
+    }
+
+    private static void remember(Object session, String url) {
+        if (session == null || url == null) {
+            return;
+        }
+        synchronized (PAGE) {
+            PAGE.put(session, url);
         }
     }
 

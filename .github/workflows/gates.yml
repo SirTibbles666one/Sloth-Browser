@@ -84,9 +84,8 @@ jobs:
 
   names:
     name: reflective names
-    # Needs the base APK, which is the app's own build and is not redistributable. Without
-    # it the job is skipped outright rather than reporting a green run of nothing.
-    if: vars.BASE_APK_URL != ''
+    # The public 1108 release is the base this shell patches. A repository variable
+    # can still point the job at a different copy of that same file.
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -95,6 +94,10 @@ jobs:
         with:
           python-version: '3.12'
       - name: shell_refs
+        env:
+          BASE_APK_URL: ${{ vars.BASE_APK_URL }}
         run: |
-          curl -sSL -o base.apk "${{ vars.BASE_APK_URL }}"
+          url="${BASE_APK_URL:-https://github.com/SirTibbles666one/Sloth-Browser-releases/releases/download/1108/SlothBrowser-1108.apk}"
+          curl -fsSL -o base.apk "$url"
+          echo "c6cec08107d57ffc9b566051accb54b7df814ffd1ec616a3a59c0a6f2850089e  base.apk" | sha256sum -c -
           python3 audit/shell_refs.py base.apk src
