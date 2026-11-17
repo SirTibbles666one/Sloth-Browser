@@ -15,8 +15,9 @@ import sys
 import zipfile
 from pathlib import Path
 
-# names the shell is allowed to ask for that live in neither place
-IGNORED = {"binding", "slothworks"}
+# names the shell is allowed to ask for that live in neither place: "sloth_shell" is the
+# shell's own preference file (SlothShell.SHELL_PREFS), which the app has never heard of
+IGNORED = {"binding", "slothworks", "sloth_shell"}
 
 
 def is_built_shell(blob):
