@@ -1,0 +1,126 @@
+name: release
+
+# One tap from the Actions tab: build Sloth Browser from the pinned 1108 base, sign it with
+# the release key, run every gate, and publish it to Sloth-Browser-releases.
+#
+# It needs four repository secrets (Settings > Secrets and variables > Actions):
+#   RELEASE_KEYSTORE_B64    the release keystore (alias sloth), base64-encoded
+#   RELEASE_STORE_PASSWORD  its store password
+#   RELEASE_KEY_PASSWORD    its key password
+#   RELEASES_TOKEN          a fine-grained token with Contents: read and write on
+#                           SirTibbles666one/Sloth-Browser-releases, and nothing else
+# The certificate must be 3d38d907...d0a947af; the ship gate refuses anything else.
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'versionCode, higher than every release so far (e.g. 1262)'
+        required: true
+      latest:
+        description: 'Make it the latest release: the in-app updater offers it to everyone'
+        type: boolean
+        default: false
+      notes:
+        description: 'One line on what changed, for the release page'
+        required: false
+        default: ''
+
+permissions:
+  contents: read
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      RELEASES_REPO: SirTibbles666one/Sloth-Browser-releases
+      VERSION: ${{ inputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Secrets are there
+        env:
+          A: ${{ secrets.RELEASE_KEYSTORE_B64 }}
+          B: ${{ secrets.RELEASE_STORE_PASSWORD }}
+          C: ${{ secrets.RELEASE_KEY_PASSWORD }}
+          D: ${{ secrets.RELEASES_TOKEN }}
+        run: |
+          missing=""
+          [ -n "$A" ] || missing="$missing RELEASE_KEYSTORE_B64"
+          [ -n "$B" ] || missing="$missing RELEASE_STORE_PASSWORD"
+          [ -n "$C" ] || missing="$missing RELEASE_KEY_PASSWORD"
+          [ -n "$D" ] || missing="$missing RELEASES_TOKEN"
+          if [ -n "$missing" ]; then
+            echo "::error::Add these repository secrets first:$missing"
+            exit 1
+          fi
+
+      - name: The version is new and higher
+        env:
+          GH_TOKEN: ${{ secrets.RELEASES_TOKEN }}
+        run: |
+          case "$VERSION" in (*[!0-9]*|'') echo "::error::versionCode must be a whole number"; exit 1;; esac
+          highest=$(gh api "repos/$RELEASES_REPO/releases?per_page=100" --paginate --jq '.[].tag_name' \
+            | grep -E '^[0-9]+$' | sort -n | tail -1)
+          if [ -n "$highest" ] && [ "$VERSION" -le "$highest" ]; then
+            echo "::error::$VERSION is not higher than $highest: Android would refuse it as an update"
+            exit 1
+          fi
+          echo "highest release so far: ${highest:-none}"
+
+      - name: JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Android SDK
+        run: |
+          SDK="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-/usr/local/lib/android/sdk}}"
+          echo "ANDROID_HOME=$SDK" >> "$GITHUB_ENV"
+          yes | "$SDK/cmdline-tools/latest/bin/sdkmanager" --licenses > /dev/null || true
+          "$SDK/cmdline-tools/latest/bin/sdkmanager" --install "platforms;android-36" "build-tools;36.0.0"
+          echo "$SDK/build-tools/36.0.0" >> "$GITHUB_PATH"
+
+      - name: Harness
+        working-directory: tests
+        run: ./gradlew testDebugUnitTest --no-daemon
+
+      - name: Base APK (the published 1108)
+        run: |
+          curl -fsSL -o "$RUNNER_TEMP/base.apk" \
+            "https://github.com/$RELEASES_REPO/releases/download/1108/SlothBrowser-1108.apk"
+
+      - name: Build, sign and gate
+        env:
+          KS_B64: ${{ secrets.RELEASE_KEYSTORE_B64 }}
+          KS_PASS: ${{ secrets.RELEASE_STORE_PASSWORD }}
+          KEY_PASS: ${{ secrets.RELEASE_KEY_PASSWORD }}
+        run: |
+          echo "$KS_B64" | base64 -d > "$RUNNER_TEMP/release.jks"
+          BASE_APK="$RUNNER_TEMP/base.apk" BASE_VERSION=1108 KEYSTORE="$RUNNER_TEMP/release.jks" \
+            OUT="$RUNNER_TEMP/out" bash tools/build.sh "$VERSION"
+          rm -f "$RUNNER_TEMP/release.jks"
+          printf '{"versionName":"%s","versionCode":%s,"apk":"SlothBrowser-%s.apk"}\n' \
+            "$VERSION" "$VERSION" "$VERSION" > "$RUNNER_TEMP/out/version.json"
+
+      - name: Keep a copy on this run
+        uses: actions/upload-artifact@v4
+        with:
+          name: SlothBrowser-${{ inputs.version }}
+          path: |
+            ${{ runner.temp }}/out/SlothBrowser-${{ inputs.version }}.apk
+            ${{ runner.temp }}/out/version.json
+
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ secrets.RELEASES_TOKEN }}
+          NOTES: ${{ inputs.notes }}
+          LATEST: ${{ inputs.latest }}
+        run: |
+          sum=$(sha256sum "$RUNNER_TEMP/out/SlothBrowser-$VERSION.apk" | cut -d' ' -f1)
+          body="${NOTES:-Built from ${GITHUB_SHA::7}.}"$'\n\n'"sha256 $sum"$'\n'"Signed with 3d38d907...d0a947af. Install over the previous build; do not uninstall."
+          gh release create "$VERSION" -R "$RELEASES_REPO" --title "$VERSION" --notes "$body" \
+            --latest="$LATEST" \
+            "$RUNNER_TEMP/out/SlothBrowser-$VERSION.apk" "$RUNNER_TEMP/out/version.json"
+          echo "published $VERSION (latest: $LATEST), sha256 $sum"
