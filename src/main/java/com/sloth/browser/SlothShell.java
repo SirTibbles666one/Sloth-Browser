@@ -2060,14 +2060,49 @@ public final class SlothShell {
 
     /** The address the browser is showing, for the library's save action. */
     static String currentUrl(Activity activity) {
-        View real = resolve(activity, "urlBar");
-        if (real instanceof EditText) {
-            CharSequence text = ((EditText) real).getText();
-            if (text != null && text.toString().trim().length() > 0) {
-                return text.toString().trim();
-            }
+        String url = pageAddress(activity);
+        return url.length() > 0 ? url : null;
+    }
+
+    /** Put the page's address on the bar: the host at rest, the whole URL to edit. */
+    static void syncAddress(Activity activity) {
+        if (topBar != null && activity != null) {
+            topBar.showAddress(pageAddress(activity));
         }
-        return null;
+    }
+
+    /**
+     * The page's address, as whole as it can be had.
+     *
+     * <p>The app's own field holds the host alone once a page is showing, so a tap there could
+     * only ever reveal the host, and a bookmark saved from it lost the path. The engine reported
+     * the whole URL when the page started, scheme and all. That URL is used when it is for the
+     * host the app is showing; otherwise - a redirect underway, a page the engine has not
+     * reported - the app's text stands, so the bar never shows a stale address.</p>
+     */
+    static String pageAddress(Activity activity) {
+        View real = resolve(activity, "urlBar");
+        String shown = "";
+        if (real instanceof EditText && ((EditText) real).getText() != null) {
+            shown = ((EditText) real).getText().toString().trim();
+        }
+        return addressFor(shown, SlothLoad.pageUrl(SlothLoad.showing()));
+    }
+
+    /** The app's text, or the engine's whole URL when both name the same host. */
+    static String addressFor(String shown, String engine) {
+        String app = shown == null ? "" : shown.trim();
+        String whole = engine == null ? "" : engine.trim();
+        if (app.isEmpty() || whole.isEmpty()) {
+            return app;
+        }
+        String lower = whole.toLowerCase(java.util.Locale.UK);
+        if (!(lower.startsWith("http://") || lower.startsWith("https://"))) {
+            return app;
+        }
+        String appHost = SlothTopBar.display(app.contains("://") ? app : "https://" + app);
+        String pageHost = SlothTopBar.display(whole);
+        return appHost.equalsIgnoreCase(pageHost) ? whole : app;
     }
 
     /** The title of the page on screen, if the app keeps one we can read. */
@@ -2234,6 +2269,7 @@ public final class SlothShell {
                 // drawn from the session's own state, so a tab switch shows that tab's load
                 SlothLoad.State load = SlothLoad.state(session);
                 topBar.showLoad(load.loading, load.progress);
+                syncAddress(owner);
             }
         }
     };
@@ -3231,13 +3267,7 @@ public final class SlothShell {
             return;
         }
         try {
-            View real = resolve(activity, "urlBar");
-            if (real instanceof EditText && topBar != null) {
-                CharSequence text = ((EditText) real).getText();
-                if (text != null) {
-                    topBar.showAddress(text.toString());
-                }
-            }
+            syncAddress(activity);
             // the app can leave the page at zero height on its own - a restart, a cleared
             // engine - and a black window with an address in it is the worst thing to hand
             // someone silently, so the tick checks rather than waits for a report
@@ -3278,13 +3308,7 @@ public final class SlothShell {
     private static void refresh(Activity activity) {
         try {
             ensurePageVisible(activity);
-            View real = resolve(activity, "urlBar");
-            if (real instanceof EditText && topBar != null) {
-                CharSequence text = ((EditText) real).getText();
-                if (text != null) {
-                    topBar.showAddress(text.toString());
-                }
-            }
+            syncAddress(activity);
 
             if (board != null) {
                 board.mirror(activity);
