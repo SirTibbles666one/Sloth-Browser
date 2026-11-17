@@ -6586,4 +6586,181 @@ public class SlothShellTest {
         assertEquals("none", SlothPages.describe());
     }
 
+    /**
+     * Where a drag lands, from each seat, for each distance and speed: the drawer's behaviour as
+     * it stands, recorded before its motion moved out of SlothShell. A row that changes is a
+     * change in how the drawer feels, made on purpose or not at all.
+     *
+     * <p>One row is recorded as it is, not as it should be: a still release at or just past the
+     * strip (peek +20 dp, speed 0) shuts the drawer. See SlothSeats: the "near the shut end"
+     * band reaches peek + 2 slop + 4 px.</p>
+     */
+    private static final String[][] LANDINGS = {
+            {"shut", "20", "0.0", "shut"},
+            {"shut", "20", "0.3", "peek"},
+            {"shut", "20", "1.5", "peek"},
+            {"shut", "20", "-0.3", "shut"},
+            {"shut", "20", "-1.5", "shut"},
+            {"shut", "150", "0.0", "peek"},
+            {"shut", "150", "0.3", "peek"},
+            {"shut", "150", "1.5", "full"},
+            {"shut", "150", "-0.3", "peek"},
+            {"shut", "150", "-1.5", "shut"},
+            {"shut", "-20", "0.0", "shut"},
+            {"shut", "-20", "0.3", "peek"},
+            {"shut", "-20", "1.5", "peek"},
+            {"shut", "-20", "-0.3", "shut"},
+            {"shut", "-20", "-1.5", "shut"},
+            {"shut", "-150", "0.0", "shut"},
+            {"shut", "-150", "0.3", "peek"},
+            {"shut", "-150", "1.5", "peek"},
+            {"shut", "-150", "-0.3", "shut"},
+            {"shut", "-150", "-1.5", "shut"},
+            {"peek", "20", "0.0", "shut"},
+            {"peek", "20", "0.3", "peek"},
+            {"peek", "20", "1.5", "full"},
+            {"peek", "20", "-0.3", "shut"},
+            {"peek", "20", "-1.5", "shut"},
+            {"peek", "150", "0.0", "peek"},
+            {"peek", "150", "0.3", "full"},
+            {"peek", "150", "1.5", "full"},
+            {"peek", "150", "-0.3", "peek"},
+            {"peek", "150", "-1.5", "shut"},
+            {"peek", "-20", "0.0", "shut"},
+            {"peek", "-20", "0.3", "peek"},
+            {"peek", "-20", "1.5", "peek"},
+            {"peek", "-20", "-0.3", "shut"},
+            {"peek", "-20", "-1.5", "shut"},
+            {"peek", "-150", "0.0", "shut"},
+            {"peek", "-150", "0.3", "peek"},
+            {"peek", "-150", "1.5", "peek"},
+            {"peek", "-150", "-0.3", "shut"},
+            {"peek", "-150", "-1.5", "shut"},
+            {"full", "20", "0.0", "full"},
+            {"full", "20", "0.3", "full"},
+            {"full", "20", "1.5", "full"},
+            {"full", "20", "-0.3", "full"},
+            {"full", "20", "-1.5", "shut"},
+            {"full", "150", "0.0", "full"},
+            {"full", "150", "0.3", "full"},
+            {"full", "150", "1.5", "full"},
+            {"full", "150", "-0.3", "full"},
+            {"full", "150", "-1.5", "shut"},
+            {"full", "-20", "0.0", "full"},
+            {"full", "-20", "0.3", "full"},
+            {"full", "-20", "1.5", "full"},
+            {"full", "-20", "-0.3", "full"},
+            {"full", "-20", "-1.5", "shut"},
+            {"full", "-150", "0.0", "full"},
+            {"full", "-150", "0.3", "full"},
+            {"full", "-150", "1.5", "full"},
+            {"full", "-150", "-0.3", "peek"},
+            {"full", "-150", "-1.5", "shut"}
+    };
+
+    @Test
+    public void everyDragLandsWhereItAlwaysHas() throws Exception {
+        assertEquals("the whole table: three seats, four distances, five speeds", 60, LANDINGS.length);
+        StringBuilder wrong = new StringBuilder();
+        for (String[] row : LANDINGS) {
+            TestActivity activity = build();
+            SlothShell.own(activity);
+            settle();
+            int land = landAfter(activity, row[0], Integer.parseInt(row[1]), Float.parseFloat(row[2]));
+            String got = seatName(activity, land);
+            if (!got.equals(row[3])) {
+                wrong.append("from ").append(row[0]).append(", ").append(row[1]).append(" dp at ")
+                        .append(row[2]).append(": was ").append(row[3]).append(", now ").append(got)
+                        .append('\n');
+            }
+            SlothShell.releaseShellForTest();
+        }
+        assertEquals("landings that changed:\n" + wrong, 0, wrong.length());
+    }
+
+    /** Two moves before the next frame are one change of height, at the newer position. */
+    @Test
+    public void twoMovesInOneFrameAreOneHeightChange() throws Exception {
+        TestActivity activity = build();
+        SlothShell.own(activity);
+        settle();
+        java.lang.reflect.Field writes = SlothShell.class.getDeclaredField("dragWrites");
+        writes.setAccessible(true);
+        SlothBar.Listener gesture = shellGesture(activity);
+        gesture.onDragStart(300f, 0f);
+        int before = writes.getInt(null);
+        gesture.onDrag(px(40));
+        gesture.onDrag(px(90));
+        org.robolectric.shadows.ShadowLooper.idleMainLooper();
+        assertEquals("one write", before + 1, writes.getInt(null));
+        assertEquals("at the newer finger", px(90), drawerOf(activity).getLayoutParams().height);
+        gesture.onRelease(0f);
+        settle();
+    }
+
+    /**
+     * A window rebuilt mid-drag (a rotation) comes back resting on a seat, and the old window's
+     * late release cannot move the new drawer.
+     */
+    @Test
+    public void aRotationMidDragComesBackOnASeat() throws Exception {
+        TestActivity activity = build();
+        SlothShell.own(activity);
+        settle();
+        SlothBar.Listener gesture = shellGesture(activity);
+        gesture.onDragStart(300f, 0f);
+        gesture.onDrag(px(130));
+        org.robolectric.shadows.ShadowLooper.idleMainLooper();
+
+        TestActivity rotated = build();
+        SlothShell.own(rotated);
+        settle();
+        int h = drawerOf(rotated).getLayoutParams().height;
+        assertTrue("the new window rests on a seat: " + h, "shut".equals(seatName(rotated, h))
+                || "peek".equals(seatName(rotated, h)) || "full".equals(seatName(rotated, h)));
+        gesture.onRelease(1.5f);
+        settle();
+        assertEquals("the old window's release did not open the new drawer", h,
+                drawerOf(rotated).getLayoutParams().height);
+    }
+
+    /** The shell's own gesture, the one every surface reports into. */
+    private static SlothBar.Listener shellGesture(Activity activity) throws Exception {
+        java.lang.reflect.Method m = SlothShell.class.getDeclaredMethod("sheetGesture", Activity.class);
+        m.setAccessible(true);
+        return (SlothBar.Listener) m.invoke(null, activity);
+    }
+
+    private int seatHeight(Activity activity, String seat) throws Exception {
+        if ("shut".equals(seat)) {
+            return 0;
+        }
+        return "peek".equals(seat) ? peekHeight(activity) : fullSeat(activity);
+    }
+
+    private String seatName(Activity activity, int h) throws Exception {
+        if (h == 0) {
+            return "shut";
+        }
+        if (h == peekHeight(activity)) {
+            return "peek";
+        }
+        if (h == fullSeat(activity)) {
+            return "full";
+        }
+        return "between:" + h;
+    }
+
+    /** Rest on a seat, drag by dyDp, let go at velocity v, and say where the sheet comes to rest. */
+    private int landAfter(Activity activity, String start, int dyDp, float v) throws Exception {
+        driveHeight(activity, seatHeight(activity, start));
+        settle();
+        SlothBar.Listener gesture = shellGesture(activity);
+        gesture.onDragStart(300f, 0f);
+        gesture.onDrag(px(dyDp));
+        org.robolectric.shadows.ShadowLooper.idleMainLooper();
+        gesture.onRelease(v);
+        settle();
+        return drawerOf(activity).getLayoutParams().height;
+    }
 }
