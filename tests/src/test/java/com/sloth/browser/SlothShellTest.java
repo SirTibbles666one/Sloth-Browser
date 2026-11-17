@@ -6822,6 +6822,53 @@ public class SlothShellTest {
         assertNotNull(findChip(page, "Pushes the page down"));
     }
 
+    /* ----------------------------------------------------------------------- keyboard */
+
+    private void keyboard(Activity activity, int px) {
+        android.view.WindowInsets insets = new android.view.WindowInsets.Builder()
+                .setInsets(android.view.WindowInsets.Type.ime(), android.graphics.Insets.of(0, 0, 0, px))
+                .build();
+        ((View) overlayOf(activity)).dispatchApplyWindowInsets(insets);
+    }
+
+    /** Typing in the drawer: it ends above the keyboard, and goes back when the keyboard goes. */
+    @Test
+    public void theDrawerMakesRoomForTheKeyboardAndTakesItBack() throws Exception {
+        TestActivity activity = build();
+        SlothShell.own(activity);
+        settle();
+        int full = fullSeat(activity);
+        driveHeight(activity, full);
+        settle();
+        int screen = activity.getResources().getDisplayMetrics().heightPixels;
+        int ime = screen / 2;
+
+        keyboard(activity, ime);
+        settle();
+        int h = drawerOf(activity).getLayoutParams().height;
+        assertTrue("the drawer ends above the keyboard: " + h + " in " + (screen - ime),
+                h <= screen - ime);
+        assertTrue("and stays open", h > 0);
+
+        keyboard(activity, 0);
+        settle();
+        assertEquals("keyboard gone, the drawer is back on its seat", full,
+                drawerOf(activity).getLayoutParams().height);
+    }
+
+    /** A shut drawer is not opened by the keyboard, and the page's own typing is left alone. */
+    @Test
+    public void theKeyboardDoesNotOpenAShutDrawer() {
+        TestActivity activity = build();
+        SlothShell.own(activity);
+        settle();
+        keyboard(activity, 900);
+        settle();
+        keyboard(activity, 0);
+        settle();
+        assertEquals(0, drawerOf(activity).getLayoutParams().height);
+    }
+
     /** The shell's own gesture, the one every surface reports into. */
     private static SlothBar.Listener shellGesture(Activity activity) throws Exception {
         java.lang.reflect.Method m = SlothShell.class.getDeclaredMethod("sheetGesture", Activity.class);

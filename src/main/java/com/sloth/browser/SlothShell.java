@@ -510,6 +510,8 @@ public final class SlothShell {
         SlothLoad.forget();
         SlothPages.clear();
         overPage = null;
+        imeInset = 0;
+        shrunkForKeyboard = false;
         onboardingFinished = false;
         syncPosted = false;
         synced = "";
@@ -653,6 +655,9 @@ public final class SlothShell {
                         ? insets.getInsets(android.view.WindowInsets.Type.navigationBars()).bottom
                         : insets.getSystemWindowInsetBottom();
                 applyBottomInset(activity, bottom);
+                if (android.os.Build.VERSION.SDK_INT >= 30) {
+                    onKeyboard(activity, insets.getInsets(android.view.WindowInsets.Type.ime()).bottom);
+                }
                 return insets;
             }
         });
@@ -3116,12 +3121,66 @@ public final class SlothShell {
      */
     private static int fullHeight(Activity activity) {
         int screen = activity.getResources().getDisplayMetrics().heightPixels;
+        if (imeInset > 0) {
+            // the keyboard is up: the drawer ends above it, however little room that leaves
+            return Math.max(peekPx + dp(activity, 40),
+                    screen - statusBarHeight(activity) - Math.max(imeInset, navInset(activity)));
+        }
         return Math.max(dp(activity, 240), screen - statusBarHeight(activity) - navInset(activity));
+    }
+
+    /** The keyboard's height, 0 while it is down. */
+    static int imeInset;
+    /** The drawer was made shorter for the keyboard and goes back to its seat when it goes. */
+    private static boolean shrunkForKeyboard;
+
+    /**
+     * The keyboard came up or went down.
+     *
+     * <p>A field in the drawer - the note, the tab filter - brings the keyboard up over the
+     * drawer's lower half, which is where those fields are. The drawer now ends above the
+     * keyboard and the field being typed in is scrolled into sight; when the keyboard goes,
+     * a drawer that was shortened for it returns to its seat.</p>
+     */
+    static void onKeyboard(final Activity activity, int ime) {
+        if (ime == imeInset) {
+            return;
+        }
+        imeInset = Math.max(0, ime);
+        if (drawer == null || drawer.getLayoutParams() == null) {
+            return;
+        }
+        int h = drawer.getLayoutParams().height;
+        if (imeInset > 0) {
+            int room = fullHeight(activity);
+            if (h > room) {
+                shrunkForKeyboard = true;
+                setDrawerHeight(activity, room);
+            }
+            MAIN.post(new Runnable() {
+                @Override
+                public void run() {
+                    View typing = drawer == null ? null : drawer.findFocus();
+                    if (typing != null) {
+                        android.graphics.Rect area = new android.graphics.Rect();
+                        typing.getDrawingRect(area);
+                        typing.requestRectangleOnScreen(area, true);
+                    }
+                }
+            });
+        } else if (shrunkForKeyboard) {
+            shrunkForKeyboard = false;
+            if (h > 0) {
+                animateTo(activity, fullSeat(activity));
+            }
+        }
     }
 
     /** The top seat: the whole drawer, fitted to what it holds. */
     private static int fullSeat(Activity activity) {
-        return Math.max(expandedHeight(activity), peekPx + dp(activity, 40));
+        int seat = Math.max(expandedHeight(activity), peekPx + dp(activity, 40));
+        // with the keyboard up the top seat is the room above it
+        return imeInset > 0 ? Math.min(seat, fullHeight(activity)) : seat;
     }
 
     /**
