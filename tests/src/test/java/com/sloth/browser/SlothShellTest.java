@@ -1122,6 +1122,75 @@ public class SlothShellTest {
         assertEquals("and it was the find bar", View.GONE, bar.getVisibility());
     }
 
+    /** Find opens under the bar, never over it: the status bar is part of the bar's height. */
+    @Test
+    public void findOpensBelowTheBar() throws Exception {
+        TestActivity activity = build();
+        SlothShell.own(activity);
+        settle();
+        assertTrue("the harness has a status bar to account for", SlothShell.statusForTest() > 0);
+        SlothShell.openFind(activity);
+        settle();
+        View root = overlayOf(activity);
+        root.measure(View.MeasureSpec.makeMeasureSpec(1080, View.MeasureSpec.EXACTLY),
+                View.MeasureSpec.makeMeasureSpec(2340, View.MeasureSpec.EXACTLY));
+        root.layout(0, 0, 1080, 2340);
+        View find = findByViewTag(root, "find-bar");
+        View bar = findByViewTag(root, "drag");
+        int barBottom = topIn(root, bar) + bar.getHeight();
+        assertTrue("find starts at or below the bar's bottom edge: find " + topIn(root, find)
+                + ", bar ends " + barBottom, topIn(root, find) >= barBottom);
+    }
+
+    /** Bookmarks, History and Downloads start below the bar, like Settings. */
+    @Test
+    public void theLibraryHeaderClearsTheBar() throws Exception {
+        TestActivity activity = build();
+        SlothShell.own(activity);
+        settle();
+        SlothShell.openLibrary(activity, "history");
+        settle();
+        View root = overlayOf(activity);
+        root.measure(View.MeasureSpec.makeMeasureSpec(1080, View.MeasureSpec.EXACTLY),
+                View.MeasureSpec.makeMeasureSpec(2340, View.MeasureSpec.EXACTLY));
+        root.layout(0, 0, 1080, 2340);
+        View bar = findByViewTag(root, "drag");
+        int barBottom = topIn(root, bar) + bar.getHeight();
+        View back = findTagged(findByViewTag(root, "library-page"), "Back");
+        assertNotNull(back);
+        assertTrue("Back starts below the bar: " + topIn(root, back) + " vs " + barBottom,
+                topIn(root, back) >= barBottom);
+    }
+
+    /** Diagnostics is full screen too: its title starts below the bar. */
+    @Test
+    public void theDiagnosticsTitleClearsTheBar() throws Exception {
+        TestActivity activity = build();
+        SlothShell.own(activity);
+        settle();
+        SlothShell.openDiagPage(activity);
+        settle();
+        View root = overlayOf(activity);
+        root.measure(View.MeasureSpec.makeMeasureSpec(1080, View.MeasureSpec.EXACTLY),
+                View.MeasureSpec.makeMeasureSpec(2340, View.MeasureSpec.EXACTLY));
+        root.layout(0, 0, 1080, 2340);
+        View bar = findByViewTag(root, "drag");
+        int barBottom = topIn(root, bar) + bar.getHeight();
+        View title = ((ViewGroup) findByViewTag(root, "diag-page")).getChildAt(0);
+        assertTrue("the title starts below the bar: " + topIn(root, title) + " vs " + barBottom,
+                topIn(root, title) >= barBottom);
+    }
+
+    /** A view's top edge in the coordinates of an ancestor, from the laid-out tree alone. */
+    private static int topIn(View ancestor, View v) {
+        int y = 0;
+        while (v != null && v != ancestor) {
+            y += v.getTop();
+            v = v.getParent() instanceof View ? (View) v.getParent() : null;
+        }
+        return y;
+    }
+
     /** Typing with no engine behind the window says so rather than pretending to search. */
     @Test
     public void findSaysWhenTheEngineIsNotThere() throws Exception {
@@ -3519,6 +3588,20 @@ public class SlothShellTest {
             shoot(activity, new java.io.File(dir, "06-palette.png"));
             findByViewTag(drawerOf(activity), "palette").setVisibility(View.GONE);
         }
+        {
+            SlothShell.openWidgetChooser(activity);
+            settle();
+            shoot(activity, new java.io.File(dir, "06b-widgets.png"));
+            findByViewTag(drawerOf(activity), "widgets").setVisibility(View.GONE);
+        }
+        {
+            driveHeight(activity, 0);
+            SlothShell.openFind(activity);
+            settle();
+            shoot(activity, new java.io.File(dir, "06c-find.png"));
+            SlothShell.closeFind(activity);
+            settle();
+        }
 
         driveHeight(activity, 0);
         settle();
@@ -3784,6 +3867,38 @@ public class SlothShellTest {
         } catch (Exception e) {
             throw new AssertionError(e);
         }
+    }
+
+    /** A list opened from the tab strip gets the whole drawer, not the strip's 64 dp. */
+    @Test
+    public void aPickerOpenedFromTheStripGetsTheFullDrawer() throws Exception {
+        TestActivity activity = build();
+        SlothShell.own(activity);
+        settle();
+        int peek = Math.round(64 * activity.getResources().getDisplayMetrics().density);
+        driveHeight(activity, peek);
+        settle();
+        SlothShell.openWidgetChooser(activity);
+        settle();
+        assertEquals("the list opens on the top seat", fullSeatOf(activity),
+                drawerOf(activity).getLayoutParams().height);
+    }
+
+    /** The menu opens the drawer onto one of its seats, never a height between them. */
+    @Test
+    public void theMenuOpensTheDrawerOnItsTopSeat() throws Exception {
+        TestActivity activity = build();
+        SlothShell.own(activity);
+        settle();
+        SlothShell.openDrawer(activity);
+        settle();
+        assertEquals(fullSeatOf(activity), drawerOf(activity).getLayoutParams().height);
+    }
+
+    private static int fullSeatOf(Activity activity) throws Exception {
+        java.lang.reflect.Method full = SlothShell.class.getDeclaredMethod("fullSeat", Activity.class);
+        full.setAccessible(true);
+        return (Integer) full.invoke(null, activity);
     }
 
     @Test

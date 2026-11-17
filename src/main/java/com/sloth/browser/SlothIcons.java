@@ -19,7 +19,7 @@ final class SlothIcons extends View {
 
     /** The controls the bar carries. */
     enum Kind { BACK, FORWARD, RELOAD, PLUS, MENU, CLOSE, LOCK, TABS, SEARCH,
-            HOME, BOOKMARK, CLOCK, DOWNLOAD }
+            HOME, BOOKMARK, CLOCK, DOWNLOAD, CHECK }
 
     private Kind kind;
     private final Paint paint = new Paint(Paint.ANTI_ALIAS_FLAG);
@@ -204,6 +204,12 @@ final class SlothIcons extends View {
                 path.lineTo(cx - r * 0.52f, cy + r * 0.56f);
                 path.lineTo(cx + r * 0.52f, cy + r * 0.56f);
                 path.lineTo(cx + r * 0.52f, cy + r * 0.40f);
+                break;
+            }
+            case CHECK: {
+                path.moveTo(cx - r * 0.55f, cy + r * 0.02f);
+                path.lineTo(cx - r * 0.15f, cy + r * 0.42f);
+                path.lineTo(cx + r * 0.58f, cy - r * 0.40f);
                 break;
             }
             case CLOSE: {

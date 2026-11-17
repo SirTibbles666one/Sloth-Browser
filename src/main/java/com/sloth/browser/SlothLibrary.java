@@ -71,14 +71,17 @@ final class SlothLibrary {
 
         LinearLayout column = new LinearLayout(activity);
         column.setOrientation(LinearLayout.VERTICAL);
-        column.setPadding(dip(activity, 18), dip(activity, 14), dip(activity, 18), dip(activity, 18));
+        // the page is full screen but the bar floats over its top: start below both the
+        // status bar and the bar, or the header and the first rows sit under them
+        column.setPadding(dip(activity, 18), dip(activity, 14) + SlothShell.topChromePx(activity),
+                dip(activity, 18), dip(activity, 18));
 
         LinearLayout head = new LinearLayout(activity);
         head.setGravity(Gravity.CENTER_VERTICAL);
         head.setPadding(0, 0, 0, dip(activity, 10));
 
-        TextView back = label(activity, "\u2039", 24f, SlothTheme.ink(), false);
-        back.setGravity(Gravity.CENTER);
+        // drawn, like the bar and Settings: a chevron glyph sits on a baseline
+        SlothIcons back = SlothIcons.of(activity, SlothIcons.Kind.BACK, 18, SlothTheme.ink());
         back.setContentDescription("Back");
         back.setBackground(pill(activity, SlothTheme.card(), SlothTheme.lineAt(0x24)));
         back.setOnClickListener(new View.OnClickListener() {
