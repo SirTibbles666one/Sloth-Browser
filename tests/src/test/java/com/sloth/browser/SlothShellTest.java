@@ -102,6 +102,27 @@ public class SlothShellTest {
             vaults++;
         }
 
+        private void importVault() {
+            imports++;
+        }
+
+        /** Null until a passphrase has created a vault file. Export must notice. */
+        public byte[] vaultFile;
+        public int imports;
+
+        public Object getVault() {
+            final TestActivity activity = this;
+            return new Object() {
+                public boolean hasVault() {
+                    return activity.vaultFile != null && activity.vaultFile.length > 0;
+                }
+
+                public byte[] vaultBytes() {
+                    return activity.vaultFile;
+                }
+            };
+        }
+
         private void startEngine() {
             restarts++;
         }
@@ -4397,6 +4418,84 @@ public class SlothShellTest {
         activity.settings.screenGuard = true;
         assertFalse("the one-time clear does not run twice", SlothShell.guardOff(activity));
         assertTrue("so the choice sticks", activity.settings.screenGuard);
+        int secure = android.view.WindowManager.LayoutParams.FLAG_SECURE;
+        assertTrue("and the window really is blocked again: the flag used to be cleared at "
+                        + "every launch, whatever the setting said",
+                (activity.getWindow().getAttributes().flags & secure) != 0);
+    }
+
+    /** The switch in Settings moves the window's flag at once, both ways. */
+    @Test
+    public void theScreenshotSwitchMovesTheWindowAtOnce() {
+        TestActivity activity = build();
+        SlothShell.own(activity);
+        int secure = android.view.WindowManager.LayoutParams.FLAG_SECURE;
+        assertEquals("after the one-time clear, screenshots work", 0,
+                activity.getWindow().getAttributes().flags & secure);
+        SlothShell.openSettingsPage(activity);
+        settle();
+        tapChip(findByViewTag(overlayOf(activity), "settings-page"), "Block screenshots");
+        settle();
+        assertTrue(activity.settings.screenGuard);
+        assertTrue("on: the window is secure",
+                (activity.getWindow().getAttributes().flags & secure) != 0);
+        tapChip(findByViewTag(overlayOf(activity), "settings-page"), "Block screenshots");
+        settle();
+        assertEquals("off: clear again", 0, activity.getWindow().getAttributes().flags & secure);
+    }
+
+    @Test
+    public void vaultRowsNameTheVaultAndRefuseASilentExport() {
+        TestActivity activity = build();
+        SlothShell.own(activity);
+        SlothShell.openSettingsPage(activity);
+        settle();
+        View page = findByViewTag(overlayOf(activity), "settings-page");
+
+        assertNotNull(findChip(page, "Export vault"));
+        assertNotNull(findChip(page, "Restore vault"));
+        assertNull(findChip(page, "Export bookmarks"));
+        assertNull(findChip(page, "Import bookmarks"));
+
+        tapChip(page, "Export vault");
+        settle();
+        android.app.Dialog missing = org.robolectric.shadows.ShadowDialog.getLatestDialog();
+        assertNotNull("a missing vault is said out loud", missing);
+        assertTrue(missing.isShowing());
+        String said = dumpText(missing.getWindow().getDecorView());
+        assertTrue("it names the missing passphrase: " + said, said.contains("passphrase"));
+        assertTrue(said.contains("Nothing was saved"));
+        assertEquals("export was not started", 0, activity.vaults);
+        ((android.app.AlertDialog) missing).getButton(
+                android.content.DialogInterface.BUTTON_POSITIVE).performClick();
+        settle();
+
+        activity.vaultFile = new byte[]{1, 2, 3};
+        tapChip(page, "Export vault");
+        settle();
+        assertEquals("a real vault file starts the export", 1, activity.vaults);
+
+        tapChip(page, "Restore vault");
+        settle();
+        android.app.Dialog confirm = org.robolectric.shadows.ShadowDialog.getLatestDialog();
+        assertNotNull(confirm);
+        String warning = dumpText(confirm.getWindow().getDecorView());
+        assertTrue("the warning says this replaces saved data: " + warning,
+                warning.contains("replaces") && warning.contains("logins"));
+        assertTrue(warning.contains("not merged"));
+        assertEquals("nothing is restored before the answer", 0, activity.imports);
+        ((android.app.AlertDialog) confirm).getButton(
+                android.content.DialogInterface.BUTTON_NEGATIVE).performClick();
+        settle();
+        assertEquals("cancel leaves the vault alone", 0, activity.imports);
+
+        tapChip(page, "Restore vault");
+        settle();
+        confirm = org.robolectric.shadows.ShadowDialog.getLatestDialog();
+        ((android.app.AlertDialog) confirm).getButton(
+                android.content.DialogInterface.BUTTON_POSITIVE).performClick();
+        settle();
+        assertEquals("restore runs only after the warning", 1, activity.imports);
     }
 
     @Test

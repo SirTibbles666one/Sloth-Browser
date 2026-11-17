@@ -1594,11 +1594,31 @@ public final class SlothShell {
         } catch (Throwable t) {
             SlothLog.note("could not clear the screen guard: " + t.getClass().getSimpleName());
         }
-        try {
-            activity.getWindow().clearFlags(android.view.WindowManager.LayoutParams.FLAG_SECURE);
-        } catch (Throwable ignored) {
-        }
+        applyScreenGuard(activity);
         return done;
+    }
+
+    /**
+     * The window follows the Block screenshots setting: secure when it is on, clear when off.
+     *
+     * <p>This used to clear the flag at every launch, after the one-time default above, so
+     * turning the setting back on did nothing. A setting that cannot be read leaves the window
+     * as the app set it.</p>
+     */
+    static void applyScreenGuard(Activity activity) {
+        if (activity == null || settingsObject(activity) == null) {
+            return;
+        }
+        boolean on = SlothPrefs.flag(activity, "screenGuard", false);
+        try {
+            if (on) {
+                activity.getWindow().addFlags(android.view.WindowManager.LayoutParams.FLAG_SECURE);
+            } else {
+                activity.getWindow().clearFlags(android.view.WindowManager.LayoutParams.FLAG_SECURE);
+            }
+        } catch (Throwable t) {
+            SlothLog.note("could not apply the screen guard: " + t.getClass().getSimpleName());
+        }
     }
 
     /** The app's settings model, found by type - its field name is the app's business. */
