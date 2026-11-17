@@ -529,11 +529,11 @@ public final class SlothShell {
             // what went wrong in the last session is worth reading in this one
             SlothLog.attach(activity);
             applyTheme();
-        if (activity != null) {
-            // before any inset is read: the window must stop fitting content inside the bars,
-            // or every measurement below describes the old window
-            requestEdgeToEdge(activity);
-        }
+            if (activity != null) {
+                // before any inset is read: the window must stop fitting content inside the
+                // bars, or every measurement below describes the old window
+                requestEdgeToEdge(activity);
+            }
             guardOff(activity);
             if (overlay == null) {
                 // nothing is attached: any loop still running belongs to a dead shell
@@ -550,486 +550,52 @@ public final class SlothShell {
                 // the previous activity is gone: let go of everything that pointed at it
                 releaseShell();
             }
-            owner = activity;
-            // a new shell means new views: anything still animating belongs to the old ones
-            gen++;
-            animating = false;
             ViewGroup content = (ViewGroup) activity.findViewById(android.R.id.content);
             if (content == null) {
                 return;
             }
+            owner = activity;
+            // a new shell means new views: anything still animating belongs to the old ones
+            gen++;
+            animating = false;
+            // measured before anything is built: the scrim, the surface's top gap and the
+            // find bar are all placed from it, and a zero here put find over the bar
+            statusInset = statusBarHeight(activity);
 
             FrameLayout root = new FrameLayout(activity);
             root.setTag("shell-root");
             root.setLayoutParams(new ViewGroup.LayoutParams(
                     ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
             root.setClipChildren(false);
+            listenForNavInset(activity, root);
 
-            // ------------------------------------------------- one surface, not two
-            // The bar and the drawer are a single clipped container. The drawer cannot
-            // detach, overlap the bar, or leave a sliver behind, because it is not a
-            // sibling of the bar any more: it is the part of the bar that grows.
-            FrameLayout surface = new FrameLayout(activity);
-            surface.setTag("surface");
-            surface.setClipChildren(true);
-            surface.setClipToOutline(true);
-            // the panel is a thing lying over the page. Paint inside the sheet can only
-            // light the sheet, so the lift has to be the system's shadow: that needs an
-            // outline to cast around, and this panel has never had one.
-            surface.setOutlineProvider(new android.view.ViewOutlineProvider() {
-                @Override
-                public void getOutline(View view, android.graphics.Outline outline) {
-                    outline.setRect(0, 0, view.getWidth(), view.getHeight());
-                }
-            });
-            surface.setElevation(dp(activity, 10));
-            // ONE shape, set once: the surface is a slab with the same radius whether it is
-            // a bar or a full dashboard. It used to swap between a capsule and a slab as it
-            // opened, and a shape that changes halfway is what made it read as two boxes.
-            GradientDrawable slab = new GradientDrawable();
-            slab.setColor(SlothTheme.surface());
-            int topRadius = dp(activity, 26);
-            int bottomRadius = dp(activity, 26);
-            slab.setCornerRadii(new float[]{topRadius, topRadius, topRadius, topRadius,
-                    bottomRadius, bottomRadius, bottomRadius, bottomRadius});
-            surface.setBackground(slab);
-            surfaceView = surface;
-            FrameLayout.LayoutParams surfaceLp = new FrameLayout.LayoutParams(
-                    ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT,
-                    Gravity.TOP);
-            // the same inset at every height: one card that grows, never a bar that becomes a
-            // sheet. The margins are the only thing that makes a floating panel read as
-            // floating, and they do not change as it opens.
-            int inset = dp(activity, 6);
-            surfaceLp.leftMargin = inset;
-            surfaceLp.rightMargin = inset;
-            surface.setLayoutParams(surfaceLp);
-            surfaceSized = false;
-            // The status bar strip belongs to the app, and on Android 15 the platform paints
-            // it edge to edge: leaving it to the system gives a band of a different colour
-            // above a panel that is ours. Paint it in the panel's own colour and tell the
-            // platform which way the glyphs must point.
-            View scrim = new View(activity);
-            scrim.setTag("status-scrim");
-            scrim.setBackgroundColor(SlothTheme.surface());
-            scrim.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);
-            FrameLayout.LayoutParams scrimLp = new FrameLayout.LayoutParams(
-                    ViewGroup.LayoutParams.MATCH_PARENT, Math.max(0, statusInset), Gravity.TOP);
-            root.addView(scrim, scrimLp);
-            statusScrim = scrim;
-            paintStatusBar(activity);
+            FrameLayout surface = buildSurface(activity);
+            buildStatusScrim(activity, root);
             root.addView(surface);
-
             // the scene sits behind the whole panel, so the bar and the drawer are the
             // same colour at the join - the seam was the sky showing only under the drawer
             backdropView = new SlothBackdrop(activity);
             surface.addView(backdropView, new FrameLayout.LayoutParams(
                     ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
 
+            // the bar and the drawer stack in one column: the drawer is the part of the
+            // bar that grows, never a sibling that can detach from it
             LinearLayout column = new LinearLayout(activity);
             column.setOrientation(LinearLayout.VERTICAL);
             column.setTag("column");
             surface.addView(column, new FrameLayout.LayoutParams(
                     ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
 
-            root.setOnApplyWindowInsetsListener(new View.OnApplyWindowInsetsListener() {
-                @Override
-                public android.view.WindowInsets onApplyWindowInsets(View v, android.view.WindowInsets insets) {
-                    int bottom = android.os.Build.VERSION.SDK_INT >= 30
-                            ? insets.getInsets(android.view.WindowInsets.Type.navigationBars()).bottom
-                            : insets.getSystemWindowInsetBottom();
-                    applyBottomInset(activity, bottom);
-                    return insets;
-                }
-            });
+            final SlothBar.Listener shellDrag = sheetGesture(activity);
+            SlothBar barWrap = buildBar(activity, shellDrag);
+            column.addView(barWrap);
+            drawer = buildDrawer(activity, shellDrag);
+            column.addView(drawer);
+            buildPages(activity, root);
+            seatSurface(activity, surface, barWrap);
 
-            topBar = new SlothTopBar(activity, barHost(activity));
-            View bar = topBar.view();
-            barView = bar;
-            chromeViews.clear();
-            java.util.Collections.addAll(chromeViews, topBar.controls());
-
-            // ------------------------------------------------- the bar drags itself
-            // No handle and no scrim: the bar is the affordance. SlothBar intercepts
-            // only once the gesture is unmistakably vertical, so taps on the address
-            // field and sideways swipes still belong to the children.
-            SlothBar barWrap = new SlothBar(activity);
-            barWrap.setTag("drag");
-            barWrapView = barWrap;
-            barWrap.addView(bar, new LinearLayout.LayoutParams(
-                    ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
-            column.addView(barWrap, new LinearLayout.LayoutParams(
-                    ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
-            // no rule between the bar and the dashboard: a divider is the cheapest way to
-            // say "two things", which is the opposite of what this surface is
-
-            final SlothBar.Listener shellDrag = new SlothBar.Listener() {
-                @Override
-                public void onDragStart(float y, float carry) {
-                    // a flick may still be flying when the finger lands. Two writers to the
-                    // same height is the drawer fighting the hand that grabbed it
-                    animating = false;
-                    gen++;
-                    downY = y;
-                    int h = drawer == null ? 0 : drawer.getLayoutParams().height;
-                    // the sheet is under the finger: it takes up the travel spent claiming
-                    // the gesture, so nothing lurches when the drag begins
-                    startH = Math.max(0, h + Math.round(carry));
-                    dragging = true;
-                    traceFrom = h;
-                    tracePeak = Math.round(startH);
-                    traceMoves = 0;
-                    traceVelocity = 0f;
-                    traceTo = -1;
-                    traceFlicked = false;
-                    traceMs = android.os.SystemClock.uptimeMillis();
-                }
-
-                @Override
-                public void onDrag(float dy) {
-                    if (drawer == null) {
-                        return;
-                    }
-                    // a digitiser can deliver two moves before a frame is drawn. Keep the
-                    // newest and apply it once per loop turn: the sheet still sits under the
-                    // finger, and the tree is measured once instead of twice
-                    dragPending = (int) Math.max(0,
-                            Math.min(startH + dy, fullHeight(activity)));
-                    if (!dragPosted) {
-                        dragPosted = true;
-                        MAIN.post(new Runnable() {
-                            @Override
-                            public void run() {
-                                dragPosted = false;
-                                if (dragging && dragPending != Integer.MIN_VALUE) {
-                                    int h = dragPending;
-                                    dragPending = Integer.MIN_VALUE;
-                                    traceMoves++;
-                                    tracePeak = h;
-                                    setDrawerHeight(activity, h);
-                                }
-                            }
-                        });
-                    }
-                }
-
-                @Override
-                public boolean onSwipe(float dx) {
-                    return swipeTab(activity, dx < 0);
-                }
-
-                @Override
-                public void onRelease(float velocity) {
-                    // only the view that claimed the drag may end it. A scrollable child
-                    // reporting its own release used to settle a sheet nobody had touched,
-                    // which is one way the drawer appeared to shut itself
-                    if (!dragging) {
-                        return;
-                    }
-                    // whatever the last turn had not applied yet, applied now, so the settle
-                    // starts from where the finger left the sheet and not one frame behind it
-                    if (dragPending != Integer.MIN_VALUE) {
-                        int h = Math.max(0, Math.min(dragPending, fullHeight(activity)));
-                        dragPending = Integer.MIN_VALUE;
-                        setDrawerHeight(activity, h);
-                    }
-                    dragging = false;
-                    traceVelocity = velocity;
-                    traceFlicked = Math.abs(velocity) > 0.55f;
-                    traceMs = android.os.SystemClock.uptimeMillis() - traceMs;
-                    // the commit: the page takes its real offset once, now that the finger is up
-                    if (appRootPadTop >= 0) {
-                        alignPageToBar(activity, drawer == null ? 0 : drawer.getLayoutParams().height, false);
-                    }
-                    finishDrag(activity, velocity);
-                }
-
-                @Override
-                public void onTap() {
-                    if (drawer == null) {
-                        return;
-                    }
-                    boolean open = drawer.getLayoutParams().height > dp(activity, 24);
-                    if (!open) {
-                        leaveSettings(activity);
-                    }
-                    // a tap on the bar is the drawer's front door: the strip of tabs first
-                    animateTo(activity, open ? 0 : peekPx);
-                }
-            };
-            barWrap.setListener(new SlothLabel(shellDrag, "bar"));
-
-            // ----------------------------------------------------------- drawer
-            FrameLayout sheet = new FrameLayout(activity);
-            FrameLayout.LayoutParams sheetLp = new FrameLayout.LayoutParams(
-                    ViewGroup.LayoutParams.MATCH_PARENT, 0);
-            // inside the surface the bar already supplies the offset, so no margin
-            sheet.setTag("drawer");
-        sheetView = sheet;
-            sheet.setLayoutParams(sheetLp);
-            sheet.setBackground(null);
-        sheet.setClipToOutline(true);
-        // the phone's navigation bar sits at the bottom of the screen; the drawer
-        // keeps its footer above it instead of letting the buttons sit underneath
-        sheet.setPadding(0, 0, 0, navInset(activity));
-
-        // between the resting sizes the drawer is mid-drag and will cut something in
-        // half. A short fade at its bottom edge makes that read as "more below" rather
-        // than as a broken card.
-            sheet.setVisibility(View.GONE);
-
-            // the reworked dashboard owns the drawer surface
-            LinearLayout holder = new LinearLayout(activity);
-            holder.setOrientation(LinearLayout.VERTICAL);
-            holder.setPadding(dp(activity, 16), 0, dp(activity, 16), 0);
-
-            SlothSheetScroll list = new SlothSheetScroll(activity);
-            list.setListener(new SlothLabel(shellDrag, "content"));
-            list.setAtFull(new SlothSheetScroll.AtFull() {
-                @Override
-                public boolean atFull() {
-                    return drawer != null && drawer.getLayoutParams() != null
-                            && drawer.getLayoutParams().height
-                            >= fullHeight(activity) - dp(activity, 2);
-                }
-            });
-            list.setTag("list");
-            scroller = list;
-            SlothLog.installCrash(activity.getApplicationContext());
-            installBack(activity);
-            every(800, new Runnable() {
-                @Override
-                public void run() {
-                    tick();
-                }
-            });
-            board = new SlothBoard(activity);
-            board.onSite(thisSite(activity));
-            board.onTabCount(tabCount(activity));
-            tintStatusBar(activity);
-            board.onTabPicked(new Runnable() {
-                @Override
-                public void run() {
-                    animateTo(activity, 0);
-                }
-            });
-            // the first seat is a row of tabs; up and down on any of it belongs to the sheet
-            strip = new SlothStrip(activity, stripHost(activity));
-            stripDrag = new SlothDrag(new SlothLabel(shellDrag, "strip"));
-            strip.setDrag(stripDrag);
-            holder.addView(strip.view(), new LinearLayout.LayoutParams(
-                    ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
-
-            scroller.addView(board.view());
-            board.onResize(new Runnable() {
-                @Override
-                public void run() {
-                    // the widgets folded or unfolded: a drawer at the top grows or shrinks with
-                    // them, so the shelf never opens under the bottom edge
-                    if (drawer != null && !dragging
-                            && drawer.getLayoutParams().height > peekPx + dp(activity, 8)) {
-                        animateTo(activity, fullSeat(activity));
-                    }
-                }
-            });
-            board.setEditSink(new Runnable() {
-                @Override
-                public void run() {
-                    if (widgetSheet != null) {
-                        widgetSheet.bringToFront();
-                        widgetSheet.setVisibility(View.VISIBLE);
-                    }
-                }
-            });
-            scroller.setFillViewport(true);
-            holder.addView(scroller, new LinearLayout.LayoutParams(
-                    ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f));
-
-            widgetSheet = widgetChooser(activity);
-            sheet.addView(widgetSheet);
-            settingsPage = SlothSettings.build(activity, new Runnable() {
-                @Override
-                public void run() {
-                    if (settingsPage != null) {
-                        settingsPage.setVisibility(View.GONE);
-                    }
-                    rebuild(activity);
-                }
-            }, new Runnable() {
-                // a row that opens one of the browser's screens must get out of the way,
-                // or the screen opens underneath a page that still covers it
-                @Override
-                public void run() {
-                    if (settingsPage != null) {
-                        settingsPage.setVisibility(View.GONE);
-                    }
-                }
-            });
-            // full screen, above the surface: the drawer closes when Settings opens, and a
-            // page parented to a closed drawer is clipped to nothing - which is what the
-            // first render of this screen showed
-            root.addView(settingsPage, new FrameLayout.LayoutParams(
-                    ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
-            settingsPage.setVisibility(View.GONE);
-            libraryPage = SlothLibrary.build(activity, new SlothLibrary.Sink() {
-                @Override
-                public void openUrl(String url) {
-                    if (libraryPage != null) {
-                        libraryPage.setVisibility(View.GONE);
-                    }
-                    gotoUrl(activity, url);
-                }
-            }, new Runnable() {
-                @Override
-                public void run() {
-                    if (libraryPage != null) {
-                        libraryPage.setVisibility(View.GONE);
-                    }
-                }
-            });
-            root.addView(libraryPage, new FrameLayout.LayoutParams(
-                    ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
-            libraryPage.setVisibility(View.GONE);
-            findBar = SlothFind.build(activity, new Runnable() {
-                @Override
-                public void run() {
-                    closeFind(activity);
-                }
-            });
-            FrameLayout.LayoutParams findLp = new FrameLayout.LayoutParams(
-                    ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
-            // under the bar, not over it: the address stays readable while a search is open
-            findLp.topMargin = dp(activity, 64) + statusInset;
-            root.addView(findBar, findLp);
-            findBar.setVisibility(View.GONE);
-            diagPage = SlothDiag.page(activity);
-            root.addView(diagPage, new FrameLayout.LayoutParams(
-                    ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
-            diagPage.setVisibility(View.GONE);
-            paletteSheet = palettePicker(activity);
-            // the sheet's bottom band is a handle, so the list keeps its last row above it
-            scroller.setPadding(0, 0, 0, dp(activity, 30));
-            scroller.setClipToPadding(false);
-            // the band was invisible, which is right for a gesture and wrong for discovery:
-            // a 36 x 3 dp line marks it without becoming the grabber band that was removed
-            FrameLayout gripWell = new FrameLayout(activity);
-            gripWell.setTag("close-grip");
-            gripWell.setContentDescription("Drag to close the drawer");
-            View gripMark = new View(activity);
-            android.graphics.drawable.GradientDrawable mark =
-                    new android.graphics.drawable.GradientDrawable();
-            mark.setShape(android.graphics.drawable.GradientDrawable.RECTANGLE);
-            mark.setCornerRadius(dp(activity, 2));
-            mark.setColor(0x3DFFFFFF);
-            gripMark.setBackground(mark);
-            FrameLayout.LayoutParams markLp = new FrameLayout.LayoutParams(
-                    dp(activity, 36), dp(activity, 3));
-            markLp.gravity = Gravity.CENTER;
-            gripWell.addView(gripMark, markLp);
-            gripBar = gripWell;
-            // SlothDrag returns false for the down so a tap on a tab square still clicks.
-            // This view is not a square. Unless it accepts the down itself, the sheet's
-            // hit test falls through the band and the drag never starts - dispatching
-            // the gesture straight at the handle hides that, which is how 1251 shipped
-            // a band that was on top and still could not be touched
-            gripBar.setClickable(true);
-            gripBar.setFocusable(true);
-            gripBar.setOnTouchListener(new SlothDrag(new SlothLabel(shellDrag, "grip")));
-            final FrameLayout.LayoutParams gripLp = new FrameLayout.LayoutParams(
-                    ViewGroup.LayoutParams.MATCH_PARENT, dp(activity, 30));
-            gripLp.gravity = Gravity.BOTTOM;
-            gripBar.setVisibility(View.GONE);
-            holder.setTag("drawer-holder");
-            sheet.addView(holder, new FrameLayout.LayoutParams(
-                    ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
-            // the band goes on AFTER the holder: a sibling added before it is covered by it,
-            // and a handle that is drawn but under the content cannot be touched at all. The
-            // palette pickers are added after this, so a picker still sits over the band
-            sheet.addView(gripBar, gripLp);
-            if (holder.getLayoutParams() instanceof FrameLayout.LayoutParams) {
-                // the content starts at the top of the sheet: the 20dp band above it was
-                // there for a grabber, and a band of panel with nothing in it is exactly the
-                // empty strip that keeps being reported
-                ((FrameLayout.LayoutParams) holder.getLayoutParams()).topMargin = 0;
-            }
-            // the seam: a shadow and a hinge line, drawn over everything in the sheet so
-            // the drawer reads as a surface lifted over the page rather than a flat panel
-            // No hinge line, no grabber band, no fade: the surface is one shape with one
-            // fill, so the seam between the header and the dashboard is not drawn at all.
-            if (paletteSheet != null) {
-                // added last so it covers the drawer content rather than sitting under it
-                sheet.addView(paletteSheet);
-            }
-            column.addView(sheet);
-            drawer = sheet;
-
-            statusInset = statusBarHeight(activity);
-            // the strip was built before the insets were known: paint it to the height we
-            // just measured, or it stays a zero-height band for the life of the window
-            if (statusScrim != null) {
-                paintStatusBar(activity);
-            }
-            // the first seat is exactly the strip: one 44 dp row of tabs and its breathing room
-            peekPx = dp(activity, 64);
-
-            // everything in the shell starts below the system status bar. Inside the
-            // surface the bar needs no margin: the surface carries the status-bar gap,
-            // and the drawer simply follows the bar.
-            surface.setPadding(0, dp(activity, 8) + statusInset, 0, 0);
-            int barHeight = bar.getLayoutParams() != null && bar.getLayoutParams().height > 0
-                    ? bar.getLayoutParams().height : dp(activity, 56);
-            barWrap.setLayoutParams(new LinearLayout.LayoutParams(
-                    ViewGroup.LayoutParams.MATCH_PARENT, barHeight));
-            // the surface is exactly the bar until the drawer grows it: never a wrap, which
-            // would measure the backdrop against the whole window
-            surfaceBarPx = barHeight + dp(activity, 8) + statusInset;
-            applySurfaceHeight(activity, 0);
-            sheet.setLayoutParams(new LinearLayout.LayoutParams(
-                    ViewGroup.LayoutParams.MATCH_PARENT, 0));
-
-
-            // collapse the original chrome and drawer: the new shell replaces both.
-            // The chrome is never lent out - an empty strip of it under the bar is
-            // exactly the "weird box" that shows up when it is left laid out.
-            for (String name : CHROME) {
-                collapse(activity, name);
-            }
-            if (!settingsOpen) {
-                for (String name : PANEL) {
-                    collapse(activity, name);
-                }
-            }
-
-            // whatever the app laid out underneath is the page; it gets pushed down
-            // so the bar never covers the top of a site
-            for (int i = 0; i < content.getChildCount(); i++) {
-                View child = content.getChildAt(i);
-                if (child != root) {
-                    appRoot = child;
-                    break;
-                }
-            }
-            if (appRoot != null) {
-                if (appRootPadTop < 0) {
-                    appRootPadTop = appRoot.getPaddingTop();
-                    // the window now runs under the nav bar, so the page has to keep its own
-                    // distance from it or the last line of every site sits under the pill
-                    appRootPadBottom = Math.max(appRoot.getPaddingBottom(), navInset(activity));
-                    appRoot.setPadding(appRoot.getPaddingLeft(), appRoot.getPaddingTop(),
-                            appRoot.getPaddingRight(), appRootPadBottom);
-                }
-                alignPageToBar(activity, 0);
-                root.post(new Runnable() {
-                    @Override
-                    public void run() {
-                        if (owner == activity) {
-                            alignPageToBar(activity, drawer == null ? 0
-                                    : drawer.getLayoutParams().height);
-                        }
-                    }
-                });
-            }
-
+            hideAppChrome(activity);
+            adoptPage(activity, content, root);
             content.addView(root);
             probeCover(activity, "shell ready");
             root.addOnAttachStateChangeListener(new View.OnAttachStateChangeListener() {
@@ -1046,6 +612,17 @@ public final class SlothShell {
             });
             overlay = root;
 
+            // wired last, once the shell is whole: a tick or a back press that lands on a
+            // half-built shell has nothing safe to touch
+            SlothLog.installCrash(activity.getApplicationContext());
+            installBack(activity);
+            every(800, new Runnable() {
+                @Override
+                public void run() {
+                    tick();
+                }
+            });
+
             // the old bar is gone for good; clear any preference left over from
             // the builds that let you bring it back, so it cannot resurrect itself
             try {
@@ -1055,12 +632,484 @@ public final class SlothShell {
             }
             refresh(activity);
         } catch (Throwable t) {
+            // a shell that failed half-way is worse than none: say why, and let the next
+            // call build it again from nothing instead of reusing the pieces
+            SlothLog.warn("shell build failed: " + t);
             if (DEBUG) {
                 t.printStackTrace();
+            }
+            if (overlay == null) {
+                releaseShell();
             }
         }
     }
 
+    /** The bottom inset arrives late and changes with gesture navigation: follow it. */
+    private static void listenForNavInset(final Activity activity, View root) {
+        root.setOnApplyWindowInsetsListener(new View.OnApplyWindowInsetsListener() {
+            @Override
+            public android.view.WindowInsets onApplyWindowInsets(View v, android.view.WindowInsets insets) {
+                int bottom = android.os.Build.VERSION.SDK_INT >= 30
+                        ? insets.getInsets(android.view.WindowInsets.Type.navigationBars()).bottom
+                        : insets.getSystemWindowInsetBottom();
+                applyBottomInset(activity, bottom);
+                return insets;
+            }
+        });
+    }
+
+    /**
+     * The top bar, wrapped in the view that drags it. No handle and no scrim: the bar is the
+     * affordance. SlothBar intercepts only once the gesture is unmistakably vertical, so taps
+     * on the address field and sideways swipes still belong to the children.
+     */
+    private static SlothBar buildBar(Activity activity, SlothBar.Listener shellDrag) {
+        topBar = new SlothTopBar(activity, barHost(activity));
+        View bar = topBar.view();
+        barView = bar;
+        chromeViews.clear();
+        java.util.Collections.addAll(chromeViews, topBar.controls());
+        SlothBar barWrap = new SlothBar(activity);
+        barWrap.setTag("drag");
+        barWrapView = barWrap;
+        barWrap.addView(bar, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+        barWrap.setListener(new SlothLabel(shellDrag, "bar"));
+        // no rule between the bar and the dashboard: a divider is the cheapest way to
+        // say "two things", which is the opposite of what this surface is
+        return barWrap;
+    }
+
+    /**
+     * The drawer: the strip of tabs over the scrolling board, the band that closes it, and
+     * the pickers that open over both. It starts shut and laid flat.
+     */
+    private static FrameLayout buildDrawer(final Activity activity, SlothBar.Listener shellDrag) {
+        FrameLayout sheet = new FrameLayout(activity);
+        sheet.setTag("drawer");
+        sheetView = sheet;
+        sheet.setBackground(null);
+        sheet.setClipToOutline(true);
+        // the phone's navigation bar sits at the bottom of the screen; the drawer
+        // keeps its footer above it instead of letting the buttons sit underneath
+        sheet.setPadding(0, 0, 0, navInset(activity));
+        sheet.setVisibility(View.GONE);
+        sheet.setLayoutParams(new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, 0));
+
+        LinearLayout holder = new LinearLayout(activity);
+        holder.setOrientation(LinearLayout.VERTICAL);
+        holder.setTag("drawer-holder");
+        holder.setPadding(dp(activity, 16), 0, dp(activity, 16), 0);
+
+        // the first seat is a row of tabs; up and down on any of it belongs to the sheet
+        strip = new SlothStrip(activity, stripHost(activity));
+        stripDrag = new SlothDrag(new SlothLabel(shellDrag, "strip"));
+        strip.setDrag(stripDrag);
+        holder.addView(strip.view(), new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+
+        SlothSheetScroll list = new SlothSheetScroll(activity);
+        list.setTag("list");
+        list.setListener(new SlothLabel(shellDrag, "content"));
+        list.setAtFull(new SlothSheetScroll.AtFull() {
+            @Override
+            public boolean atFull() {
+                return drawer != null && drawer.getLayoutParams() != null
+                        && drawer.getLayoutParams().height
+                        >= fullHeight(activity) - dp(activity, 2);
+            }
+        });
+        scroller = list;
+        scroller.setFillViewport(true);
+        // the sheet's bottom band is a handle, so the list keeps its last row above it
+        scroller.setPadding(0, 0, 0, dp(activity, 30));
+        scroller.setClipToPadding(false);
+
+        board = buildBoard(activity);
+        scroller.addView(board.view());
+        holder.addView(scroller, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f));
+
+        // stacking order matters: the widget chooser under the content until it is brought
+        // forward, the band AFTER the holder (a handle drawn under the content cannot be
+        // touched at all), and the palette last so it covers both
+        widgetSheet = widgetChooser(activity);
+        sheet.addView(widgetSheet);
+        sheet.addView(holder, new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+        gripBar = buildGrip(activity, shellDrag);
+        sheet.addView(gripBar);
+        paletteSheet = palettePicker(activity);
+        if (paletteSheet != null) {
+            sheet.addView(paletteSheet);
+        }
+        return sheet;
+    }
+
+    /** The drawer's content, wired to the sheet it lives in. */
+    private static SlothBoard buildBoard(final Activity activity) {
+        SlothBoard made = new SlothBoard(activity);
+        made.onSite(thisSite(activity));
+        made.onTabCount(tabCount(activity));
+        tintStatusBar(activity);
+        made.onTabPicked(new Runnable() {
+            @Override
+            public void run() {
+                animateTo(activity, 0);
+            }
+        });
+        made.onResize(new Runnable() {
+            @Override
+            public void run() {
+                // the widgets folded or unfolded: a drawer at the top grows or shrinks with
+                // them, so the shelf never opens under the bottom edge
+                if (drawer != null && !dragging
+                        && drawer.getLayoutParams().height > peekPx + dp(activity, 8)) {
+                    animateTo(activity, fullSeat(activity));
+                }
+            }
+        });
+        made.setEditSink(new Runnable() {
+            @Override
+            public void run() {
+                if (widgetSheet != null) {
+                    widgetSheet.bringToFront();
+                    widgetSheet.setVisibility(View.VISIBLE);
+                }
+            }
+        });
+        return made;
+    }
+
+    /**
+     * Size the shut panel: the surface carries the status-bar gap, the bar its own height,
+     * and the drawer nothing. Everything placed under the bar is placed from this.
+     */
+    private static void seatSurface(Activity activity, FrameLayout surface, SlothBar barWrap) {
+        // the first seat is exactly the strip: one 44 dp row of tabs and its breathing room
+        peekPx = dp(activity, 64);
+        surface.setPadding(0, dp(activity, 8) + statusInset, 0, 0);
+        View bar = barView;
+        int barHeight = bar != null && bar.getLayoutParams() != null
+                && bar.getLayoutParams().height > 0
+                ? bar.getLayoutParams().height : dp(activity, 56);
+        barWrap.setLayoutParams(new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, barHeight));
+        // the surface is exactly the bar until the drawer grows it: never a wrap, which
+        // would measure the backdrop against the whole window
+        surfaceBarPx = barHeight + dp(activity, 8) + statusInset;
+        placeFind();
+        applySurfaceHeight(activity, 0);
+    }
+
+    /**
+     * The one gesture that moves the sheet. The bar, the strip, the list and the grip all
+     * report into it, labelled, so whichever of them claims a drag drives the same height.
+     */
+    private static SlothBar.Listener sheetGesture(final Activity activity) {
+    return new SlothBar.Listener() {
+            @Override
+            public void onDragStart(float y, float carry) {
+                // a flick may still be flying when the finger lands. Two writers to the
+                // same height is the drawer fighting the hand that grabbed it
+                animating = false;
+                gen++;
+                downY = y;
+                int h = drawer == null ? 0 : drawer.getLayoutParams().height;
+                // the sheet is under the finger: it takes up the travel spent claiming
+                // the gesture, so nothing lurches when the drag begins
+                startH = Math.max(0, h + Math.round(carry));
+                dragging = true;
+                traceFrom = h;
+                tracePeak = Math.round(startH);
+                traceMoves = 0;
+                traceVelocity = 0f;
+                traceTo = -1;
+                traceFlicked = false;
+                traceMs = android.os.SystemClock.uptimeMillis();
+            }
+
+            @Override
+            public void onDrag(float dy) {
+                if (drawer == null) {
+                    return;
+                }
+                // a digitiser can deliver two moves before a frame is drawn. Keep the
+                // newest and apply it once per loop turn: the sheet still sits under the
+                // finger, and the tree is measured once instead of twice
+                dragPending = (int) Math.max(0,
+                        Math.min(startH + dy, fullHeight(activity)));
+                if (!dragPosted) {
+                    dragPosted = true;
+                    MAIN.post(new Runnable() {
+                        @Override
+                        public void run() {
+                            dragPosted = false;
+                            if (dragging && dragPending != Integer.MIN_VALUE) {
+                                int h = dragPending;
+                                dragPending = Integer.MIN_VALUE;
+                                traceMoves++;
+                                tracePeak = h;
+                                setDrawerHeight(activity, h);
+                            }
+                        }
+                    });
+                }
+            }
+
+            @Override
+            public boolean onSwipe(float dx) {
+                return swipeTab(activity, dx < 0);
+            }
+
+            @Override
+            public void onRelease(float velocity) {
+                // only the view that claimed the drag may end it. A scrollable child
+                // reporting its own release used to settle a sheet nobody had touched,
+                // which is one way the drawer appeared to shut itself
+                if (!dragging) {
+                    return;
+                }
+                // whatever the last turn had not applied yet, applied now, so the settle
+                // starts from where the finger left the sheet and not one frame behind it
+                if (dragPending != Integer.MIN_VALUE) {
+                    int h = Math.max(0, Math.min(dragPending, fullHeight(activity)));
+                    dragPending = Integer.MIN_VALUE;
+                    setDrawerHeight(activity, h);
+                }
+                dragging = false;
+                traceVelocity = velocity;
+                traceFlicked = Math.abs(velocity) > 0.55f;
+                traceMs = android.os.SystemClock.uptimeMillis() - traceMs;
+                // the commit: the page takes its real offset once, now that the finger is up
+                if (appRootPadTop >= 0) {
+                    alignPageToBar(activity, drawer == null ? 0 : drawer.getLayoutParams().height, false);
+                }
+                finishDrag(activity, velocity);
+            }
+
+            @Override
+            public void onTap() {
+                if (drawer == null) {
+                    return;
+                }
+                boolean open = drawer.getLayoutParams().height > dp(activity, 24);
+                if (!open) {
+                    leaveSettings(activity);
+                }
+                // a tap on the bar is the drawer's front door: the strip of tabs first
+                animateTo(activity, open ? 0 : peekPx);
+            }
+        };
+    }
+
+    /** The full-screen pages that open over everything: settings, library, find, diagnostics. */
+    private static void buildPages(final Activity activity, FrameLayout root) {
+        settingsPage = SlothSettings.build(activity, new Runnable() {
+            @Override
+            public void run() {
+                if (settingsPage != null) {
+                    settingsPage.setVisibility(View.GONE);
+                }
+                rebuild(activity);
+            }
+        }, new Runnable() {
+            // a row that opens one of the browser's screens must get out of the way,
+            // or the screen opens underneath a page that still covers it
+            @Override
+            public void run() {
+                if (settingsPage != null) {
+                    settingsPage.setVisibility(View.GONE);
+                }
+            }
+        });
+        // full screen, above the surface: the drawer closes when Settings opens, and a
+        // page parented to a closed drawer is clipped to nothing - which is what the
+        // first render of this screen showed
+        root.addView(settingsPage, new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+        settingsPage.setVisibility(View.GONE);
+        libraryPage = SlothLibrary.build(activity, new SlothLibrary.Sink() {
+            @Override
+            public void openUrl(String url) {
+                if (libraryPage != null) {
+                    libraryPage.setVisibility(View.GONE);
+                }
+                gotoUrl(activity, url);
+            }
+        }, new Runnable() {
+            @Override
+            public void run() {
+                if (libraryPage != null) {
+                    libraryPage.setVisibility(View.GONE);
+                }
+            }
+        });
+        root.addView(libraryPage, new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+        libraryPage.setVisibility(View.GONE);
+        findBar = SlothFind.build(activity, new Runnable() {
+            @Override
+            public void run() {
+                closeFind(activity);
+            }
+        });
+        FrameLayout.LayoutParams findLp = new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        // under the bar, not over it: placeFind() sets the margin once the bar is measured
+        root.addView(findBar, findLp);
+        findBar.setVisibility(View.GONE);
+        diagPage = SlothDiag.page(activity);
+        root.addView(diagPage, new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+        diagPage.setVisibility(View.GONE);
+    }
+
+    /** The band at the sheet's bottom edge that closes it: a short line marks it. */
+    private static View buildGrip(Activity activity, SlothBar.Listener shellDrag) {
+        // the band was invisible, which is right for a gesture and wrong for discovery:
+        // a 36 x 3 dp line marks it without becoming the grabber band that was removed
+        FrameLayout gripWell = new FrameLayout(activity);
+        gripWell.setTag("close-grip");
+        gripWell.setContentDescription("Drag to close the drawer");
+        View gripMark = new View(activity);
+        android.graphics.drawable.GradientDrawable mark =
+                new android.graphics.drawable.GradientDrawable();
+        mark.setShape(android.graphics.drawable.GradientDrawable.RECTANGLE);
+        mark.setCornerRadius(dp(activity, 2));
+        mark.setColor(0x3DFFFFFF);
+        gripMark.setBackground(mark);
+        FrameLayout.LayoutParams markLp = new FrameLayout.LayoutParams(
+                dp(activity, 36), dp(activity, 3));
+        markLp.gravity = Gravity.CENTER;
+        gripWell.addView(gripMark, markLp);
+        gripBar = gripWell;
+        // SlothDrag returns false for the down so a tap on a tab square still clicks.
+        // This view is not a square. Unless it accepts the down itself, the sheet's
+        // hit test falls through the band and the drag never starts - dispatching
+        // the gesture straight at the handle hides that, which is how 1251 shipped
+        // a band that was on top and still could not be touched
+        gripBar.setClickable(true);
+        gripBar.setFocusable(true);
+        gripBar.setOnTouchListener(new SlothDrag(new SlothLabel(shellDrag, "grip")));
+        final FrameLayout.LayoutParams gripLp = new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, dp(activity, 30));
+        gripLp.gravity = Gravity.BOTTOM;
+        gripBar.setVisibility(View.GONE);
+        gripWell.setLayoutParams(gripLp);
+        return gripWell;
+    }
+
+    /** The panel: one clipped slab that is the bar closed and the bar plus drawer open. */
+    private static FrameLayout buildSurface(Activity activity) {
+        // ------------------------------------------------- one surface, not two
+        // The bar and the drawer are a single clipped container. The drawer cannot
+        // detach, overlap the bar, or leave a sliver behind, because it is not a
+        // sibling of the bar any more: it is the part of the bar that grows.
+        FrameLayout surface = new FrameLayout(activity);
+        surface.setTag("surface");
+        surface.setClipChildren(true);
+        surface.setClipToOutline(true);
+        // the panel is a thing lying over the page. Paint inside the sheet can only
+        // light the sheet, so the lift has to be the system's shadow: that needs an
+        // outline to cast around, and this panel has never had one.
+        surface.setOutlineProvider(new android.view.ViewOutlineProvider() {
+            @Override
+            public void getOutline(View view, android.graphics.Outline outline) {
+                outline.setRect(0, 0, view.getWidth(), view.getHeight());
+            }
+        });
+        surface.setElevation(dp(activity, 10));
+        // ONE shape, set once: the surface is a slab with the same radius whether it is
+        // a bar or a full dashboard. It used to swap between a capsule and a slab as it
+        // opened, and a shape that changes halfway is what made it read as two boxes.
+        GradientDrawable slab = new GradientDrawable();
+        slab.setColor(SlothTheme.surface());
+        int topRadius = dp(activity, 26);
+        int bottomRadius = dp(activity, 26);
+        slab.setCornerRadii(new float[]{topRadius, topRadius, topRadius, topRadius,
+                bottomRadius, bottomRadius, bottomRadius, bottomRadius});
+        surface.setBackground(slab);
+        surfaceView = surface;
+        FrameLayout.LayoutParams surfaceLp = new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT,
+                Gravity.TOP);
+        // the same inset at every height: one card that grows, never a bar that becomes a
+        // sheet. The margins are the only thing that makes a floating panel read as
+        // floating, and they do not change as it opens.
+        int inset = dp(activity, 6);
+        surfaceLp.leftMargin = inset;
+        surfaceLp.rightMargin = inset;
+        surface.setLayoutParams(surfaceLp);
+        surfaceSized = false;
+        return surface;
+    }
+
+    /** The status bar band, painted in the panel's colour. */
+    private static void buildStatusScrim(Activity activity, FrameLayout root) {
+        // The status bar strip belongs to the app, and on Android 15 the platform paints
+        // it edge to edge: leaving it to the system gives a band of a different colour
+        // above a panel that is ours. Paint it in the panel's own colour and tell the
+        // platform which way the glyphs must point.
+        View scrim = new View(activity);
+        scrim.setTag("status-scrim");
+        scrim.setBackgroundColor(SlothTheme.surface());
+        scrim.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);
+        FrameLayout.LayoutParams scrimLp = new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, Math.max(0, statusInset), Gravity.TOP);
+        root.addView(scrim, scrimLp);
+        statusScrim = scrim;
+        paintStatusBar(activity);
+    }
+
+    /** The app's own chrome and panel are replaced by the shell: lay them flat. */
+    private static void hideAppChrome(Activity activity) {
+        // collapse the original chrome and drawer: the new shell replaces both.
+        // The chrome is never lent out - an empty strip of it under the bar is
+        // exactly the "weird box" that shows up when it is left laid out.
+        for (String name : CHROME) {
+            collapse(activity, name);
+        }
+        if (!settingsOpen) {
+            for (String name : PANEL) {
+                collapse(activity, name);
+            }
+        }
+    }
+
+    /** Whatever the app laid out underneath is the page: it moves down to clear the bar. */
+    private static void adoptPage(final Activity activity, ViewGroup content, FrameLayout root) {
+        // whatever the app laid out underneath is the page; it gets pushed down
+        // so the bar never covers the top of a site
+        for (int i = 0; i < content.getChildCount(); i++) {
+            View child = content.getChildAt(i);
+            if (child != root) {
+                appRoot = child;
+                break;
+            }
+        }
+        if (appRoot != null) {
+            if (appRootPadTop < 0) {
+                appRootPadTop = appRoot.getPaddingTop();
+                // the window now runs under the nav bar, so the page has to keep its own
+                // distance from it or the last line of every site sits under the pill
+                appRootPadBottom = Math.max(appRoot.getPaddingBottom(), navInset(activity));
+                appRoot.setPadding(appRoot.getPaddingLeft(), appRoot.getPaddingTop(),
+                        appRoot.getPaddingRight(), appRootPadBottom);
+            }
+            alignPageToBar(activity, 0);
+            root.post(new Runnable() {
+                @Override
+                public void run() {
+                    if (owner == activity) {
+                        alignPageToBar(activity, drawer == null ? 0
+                                : drawer.getLayoutParams().height);
+                    }
+                }
+            });
+        }
+    }
 
     /** When the last cover probe ran, so a busy screen does not fill the log with probes. */
     private static long lastProbe;
@@ -2138,6 +2187,7 @@ public final class SlothShell {
             return;
         }
         closeDrawerFor(activity);
+        placeFind();
         findBar.bringToFront();
         findBar.setVisibility(View.VISIBLE);
         View field = findBar.findFocus() == null ? null : findBar.findFocus();
@@ -2154,6 +2204,18 @@ public final class SlothShell {
             }
         }
         SlothLog.note("find opened");
+    }
+
+    /** Find sits directly under the bar, whose bottom edge includes the status bar. */
+    private static void placeFind() {
+        if (findBar != null && surfaceBarPx > 0
+                && findBar.getLayoutParams() instanceof FrameLayout.LayoutParams) {
+            FrameLayout.LayoutParams lp = (FrameLayout.LayoutParams) findBar.getLayoutParams();
+            if (lp.topMargin != surfaceBarPx) {
+                lp.topMargin = surfaceBarPx;
+                findBar.setLayoutParams(lp);
+            }
+        }
     }
 
     /** Close find and take the highlights with it. */

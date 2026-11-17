@@ -1122,6 +1122,36 @@ public class SlothShellTest {
         assertEquals("and it was the find bar", View.GONE, bar.getVisibility());
     }
 
+    /** Find opens under the bar, never over it: the status bar is part of the bar's height. */
+    @Test
+    public void findOpensBelowTheBar() throws Exception {
+        TestActivity activity = build();
+        SlothShell.own(activity);
+        settle();
+        assertTrue("the harness has a status bar to account for", SlothShell.statusForTest() > 0);
+        SlothShell.openFind(activity);
+        settle();
+        View root = overlayOf(activity);
+        root.measure(View.MeasureSpec.makeMeasureSpec(1080, View.MeasureSpec.EXACTLY),
+                View.MeasureSpec.makeMeasureSpec(2340, View.MeasureSpec.EXACTLY));
+        root.layout(0, 0, 1080, 2340);
+        View find = findByViewTag(root, "find-bar");
+        View bar = findByViewTag(root, "drag");
+        int barBottom = topIn(root, bar) + bar.getHeight();
+        assertTrue("find starts at or below the bar's bottom edge: find " + topIn(root, find)
+                + ", bar ends " + barBottom, topIn(root, find) >= barBottom);
+    }
+
+    /** A view's top edge in the coordinates of an ancestor, from the laid-out tree alone. */
+    private static int topIn(View ancestor, View v) {
+        int y = 0;
+        while (v != null && v != ancestor) {
+            y += v.getTop();
+            v = v.getParent() instanceof View ? (View) v.getParent() : null;
+        }
+        return y;
+    }
+
     /** Typing with no engine behind the window says so rather than pretending to search. */
     @Test
     public void findSaysWhenTheEngineIsNotThere() throws Exception {
