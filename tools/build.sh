@@ -23,6 +23,17 @@ VERSION="${1:?usage: build.sh <versionCode>}"
 : "${ANDROID_HOME:?set ANDROID_HOME}"
 : "${JAVA_HOME:?set JAVA_HOME}"
 
+# The base is the published 1108 release: the app's own build, before any shell. A different
+# file is a different app, and the hook would still run on it, so it is refused. A new base
+# (a newer engine) is a deliberate change to this line, made with the new-base procedure in
+# docs/RELEASING.md.
+BASE_SHA256="c6cec08107d57ffc9b566051accb54b7df814ffd1ec616a3a59c0a6f2850089e"
+actual="$(sha256sum "$BASE_APK" | awk '{print $1}')"
+if [ "$actual" != "$BASE_SHA256" ]; then
+    echo "base APK sha256 $actual is not the 1108 release ($BASE_SHA256)"
+    exit 1
+fi
+
 HERE="$(cd "$(dirname "$0")/.." && pwd)"
 OUT="${OUT:-$HERE/build}"
 BUILD_TOOLS="${BUILD_TOOLS:-$ANDROID_HOME/build-tools/36.0.0}"
