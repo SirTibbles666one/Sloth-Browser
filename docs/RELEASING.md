@@ -12,15 +12,27 @@ A build is shippable when all three gates pass, and not before.
 4. Verify after promoting: `curl -s -o /dev/null -w '%{redirect_url}' .../releases/latest` must
    name the new tag, and the `version.json` on that tag must name the new build.
 
-Signing continuity is not optional. From 1252 the certificate is
-`b29c6c7f60d31209baf24014963a3630a0c087d0e8d81555a98206b3b2becab6`. A build signed with
-anything else cannot install over a 1252 copy.
+Signing continuity is not optional. The release certificate is
+`3d38d9070b9042b879eb96bbafe949e2dabbf8f6fc798bcc8d60149cd0a947af`, the owner's key, alias
+`sloth`. It signed every build up to 1251. A build signed with anything else cannot install
+over those copies.
 
-1252 is a new key. The previous certificate
-`3d38d9070b9042b879eb96bbafe949e2dabbf8f6fc798bcc8d60149cd0a947af` is not available, so 1252
-does not install over 1251 or anything older. The old app has to be uninstalled first, and
-that drops its data. Every later build has to be signed with the 1252 key. The keystore and
-its password are not in this repository.
+History, so nobody repeats it:
+
+| Builds | Signed with | Installs over |
+| --- | --- | --- |
+| up to 1251 | 3d38... (release key) | each other |
+| 1252, 1253 | b29c6c7f... (a pipeline without the release key) | only each other: 1251 had to be uninstalled |
+| 1254 | ccbd3cd0... (a throwaway test key) | nothing: installed after an uninstall |
+| 1255 | 3d38..., with a rotation record from ccbd3cd0... | 1254, and anything on 3d38 running Android 9+ |
+| 1256 on | 3d38... alone | 1255 and everything on 3d38 |
+
+A rotation record (`docs/signing/*.lineage`) lets a phone holding a build signed with an older
+key accept one signed with a newer key, without an uninstall. It needs both keys to make, and
+`tools/build.sh` uses it when `LINEAGE` and `OLD_KEYSTORE` are set. A rotation build's v1/v2
+blocks are signed with the old key, so it is for the phones on that key only; public releases
+are built without `LINEAGE`. Phones on 1252 or 1253 need the b29c key to get a record; without
+it they must export the vault and reinstall.
 
 Honesty rules for the note:
 
