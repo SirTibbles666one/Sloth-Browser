@@ -1142,6 +1142,26 @@ public class SlothShellTest {
                 + ", bar ends " + barBottom, topIn(root, find) >= barBottom);
     }
 
+    /** Bookmarks, History and Downloads start below the bar, like Settings. */
+    @Test
+    public void theLibraryHeaderClearsTheBar() throws Exception {
+        TestActivity activity = build();
+        SlothShell.own(activity);
+        settle();
+        SlothShell.openLibrary(activity, "history");
+        settle();
+        View root = overlayOf(activity);
+        root.measure(View.MeasureSpec.makeMeasureSpec(1080, View.MeasureSpec.EXACTLY),
+                View.MeasureSpec.makeMeasureSpec(2340, View.MeasureSpec.EXACTLY));
+        root.layout(0, 0, 1080, 2340);
+        View bar = findByViewTag(root, "drag");
+        int barBottom = topIn(root, bar) + bar.getHeight();
+        View back = findTagged(findByViewTag(root, "library-page"), "Back");
+        assertNotNull(back);
+        assertTrue("Back starts below the bar: " + topIn(root, back) + " vs " + barBottom,
+                topIn(root, back) >= barBottom);
+    }
+
     /** A view's top edge in the coordinates of an ancestor, from the laid-out tree alone. */
     private static int topIn(View ancestor, View v) {
         int y = 0;
