@@ -56,7 +56,9 @@ final class SlothDiag {
         LinearLayout column = new LinearLayout(activity);
         column.setOrientation(LinearLayout.VERTICAL);
         column.setBackgroundColor(SlothTheme.bg());
-        column.setPadding(dp(activity, 18), dp(activity, 16), dp(activity, 18), dp(activity, 18));
+        // full screen under the floating bar: start below it, or the title is behind it
+        column.setPadding(dp(activity, 18), dp(activity, 16) + SlothShell.topChromePx(activity),
+                dp(activity, 18), dp(activity, 18));
         column.setTag("diag-page");
 
         TextView title = new TextView(activity);

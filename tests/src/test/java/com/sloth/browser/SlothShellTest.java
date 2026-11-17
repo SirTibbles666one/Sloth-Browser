@@ -1162,6 +1162,25 @@ public class SlothShellTest {
                 topIn(root, back) >= barBottom);
     }
 
+    /** Diagnostics is full screen too: its title starts below the bar. */
+    @Test
+    public void theDiagnosticsTitleClearsTheBar() throws Exception {
+        TestActivity activity = build();
+        SlothShell.own(activity);
+        settle();
+        SlothShell.openDiagPage(activity);
+        settle();
+        View root = overlayOf(activity);
+        root.measure(View.MeasureSpec.makeMeasureSpec(1080, View.MeasureSpec.EXACTLY),
+                View.MeasureSpec.makeMeasureSpec(2340, View.MeasureSpec.EXACTLY));
+        root.layout(0, 0, 1080, 2340);
+        View bar = findByViewTag(root, "drag");
+        int barBottom = topIn(root, bar) + bar.getHeight();
+        View title = ((ViewGroup) findByViewTag(root, "diag-page")).getChildAt(0);
+        assertTrue("the title starts below the bar: " + topIn(root, title) + " vs " + barBottom,
+                topIn(root, title) >= barBottom);
+    }
+
     /** A view's top edge in the coordinates of an ancestor, from the laid-out tree alone. */
     private static int topIn(View ancestor, View v) {
         int y = 0;
