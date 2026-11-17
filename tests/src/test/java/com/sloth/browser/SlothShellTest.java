@@ -1546,7 +1546,12 @@ public class SlothShellTest {
 
         EditText shown = findAddress(overlayOf(activity));
         assertNotNull("the bar owns an address field", shown);
-        assertEquals("https://example.org/page", shown.getText().toString());
+        assertEquals("at rest it shows the site, the way phone browsers do", "example.org",
+                shown.getText().toString());
+
+        shown.requestFocus();
+        assertEquals("tap in and the whole address is there to edit", "https://example.org/page",
+                shown.getText().toString());
     }
 
     @Test
@@ -1932,15 +1937,15 @@ public class SlothShellTest {
         EditText shown = findAddress(overlayOf(activity));
         assertNotNull(shown);
 
-        shown.setText("http://not-secure.example");
-        org.robolectric.shadows.ShadowLooper.idleMainLooper();
+        activity.binding.urlBar.setText("http://not-secure.example");
+        SlothShell.tick();
         assertEquals("warns in colour", 0xFFE2A05A, ((SlothIcons) findLock(overlayOf(activity))).colour());
         assertTrue("and says so in words",
                 String.valueOf(findLock(overlayOf(activity)).getContentDescription())
                         .contains("not a secure address"));
 
-        shown.setText("https://sloth.example");
-        org.robolectric.shadows.ShadowLooper.idleMainLooper();
+        activity.binding.urlBar.setText("https://sloth.example");
+        SlothShell.tick();
         assertEquals("ink when secure", SlothTheme.dim(),
                 ((SlothIcons) findLock(overlayOf(activity))).colour());
         assertTrue("and it is the way into site settings",
@@ -1983,8 +1988,9 @@ public class SlothShellTest {
         Counter info = new Counter();
         activity.binding.pageInfo.setOnClickListener(info);
         SlothShell.own(activity);
-        findAddress(overlayOf(activity)).setText("https://sloth.example/leaf");
-        org.robolectric.shadows.ShadowLooper.idleMainLooper();
+        // a page arrives the way it does on the phone: in the app's own bar, read on the tick
+        activity.binding.urlBar.setText("https://sloth.example/leaf");
+        SlothShell.tick();
 
         View lock = findLock(overlayOf(activity));
         assertNotNull(lock);
@@ -2314,14 +2320,16 @@ public class SlothShellTest {
         TestActivity activity = build();
         SlothShell.own(activity);
         android.widget.EditText field = findAddress(overlayOf(activity));
-        field.setText("sloth.example/page");
+        activity.binding.urlBar.setText("https://sloth.example/page");
+        SlothShell.tick();
+        assertEquals("at rest the field shows the site", "sloth.example", field.getText().toString());
 
         assertTrue("long press is handled", field.performLongClick());
 
         android.content.ClipboardManager clipboard =
                 (android.content.ClipboardManager) activity.getSystemService(Context.CLIPBOARD_SERVICE);
-        assertEquals("the address is on the clipboard",
-                "sloth.example/page", clipboard.getPrimaryClip().getItemAt(0).getText().toString());
+        assertEquals("the whole address is on the clipboard, not the short form",
+                "https://sloth.example/page", clipboard.getPrimaryClip().getItemAt(0).getText().toString());
     }
 
     @Test
@@ -2939,8 +2947,9 @@ public class SlothShellTest {
     public void thePadlockIsTheSiteControl() {
         TestActivity activity = build();
         SlothShell.own(activity);
-        findAddress(overlayOf(activity)).setText("https://sloth.example/leaf");
-        org.robolectric.shadows.ShadowLooper.idleMainLooper();
+        // a page arrives the way it does on the phone: in the app's own bar, read on the tick
+        activity.binding.urlBar.setText("https://sloth.example/leaf");
+        SlothShell.tick();
         View lock = findLock(overlayOf(activity));
         assertNotNull("the padlock sits in the address field", lock);
         assertTrue("and it opens site settings", lock.isClickable());
@@ -3294,6 +3303,34 @@ public class SlothShellTest {
         assertTrue("the sloth himself is missing from the scene: " + found + " pixels", found > 500);
     }
 
+    /** A panel that is only the bar has no room for him: no head over the field, no branch under it. */
+    @Test
+    @org.robolectric.annotation.GraphicsMode(org.robolectric.annotation.GraphicsMode.Mode.NATIVE)
+    public void aBarHeightSceneHasNoSlothSqueezedIntoIt() {
+        TestActivity activity = build();
+        SlothShell.own(activity);
+        View backdrop = findByViewTag(overlayOf(activity), "backdrop");
+        backdrop.measure(View.MeasureSpec.makeMeasureSpec(900, View.MeasureSpec.EXACTLY),
+                View.MeasureSpec.makeMeasureSpec(260, View.MeasureSpec.EXACTLY));
+        backdrop.layout(0, 0, 900, 260);
+        android.graphics.Bitmap bitmap = android.graphics.Bitmap.createBitmap(900, 260,
+                android.graphics.Bitmap.Config.ARGB_8888);
+        backdrop.draw(new android.graphics.Canvas(bitmap));
+        int body = com.sloth.browser.SlothBackdrop.bodyColour();
+        int found = 0;
+        for (int x = 0; x < 900; x++) {
+            for (int y = 0; y < 260; y++) {
+                if (bitmap.getPixel(x, y) == body) {
+                    found++;
+                }
+            }
+        }
+        assertEquals("no sloth pixels in a bar-height scene", 0, found);
+        assertEquals(0f, com.sloth.browser.SlothBackdrop.slothPresence(900, 260), 0.001f);
+        assertEquals("and he is fully there once there is room", 1f,
+                com.sloth.browser.SlothBackdrop.slothPresence(900, 700), 0.001f);
+    }
+
     /* -------------------------------------------------------------------
      * Renders every state of the shell to a PNG so the layout can be looked at
      * rather than argued about. A three-button navigation bar is drawn over the
@@ -3324,6 +3361,10 @@ public class SlothShellTest {
         settle();
         shoot(activity, new java.io.File(dir, "01b-loading.png"));
         session.getProgressDelegate().onPageStop(session, true);
+        activity.binding.urlBar.setText("https://www.example.org/articles/sloths?ref=home");
+        SlothShell.tick();
+        settle();
+        shoot(activity, new java.io.File(dir, "01c-address.png"));
 
         View handle = findByViewTag(overlayOf(activity), "drag");
         long t0 = android.os.SystemClock.uptimeMillis();
@@ -5775,6 +5816,51 @@ public class SlothShellTest {
             }
         }
         return null;
+    }
+
+    /* -------------------------------------------------------------- the address at rest */
+
+    @Test
+    public void theSiteIsWhatTheIdleFieldShows() {
+        assertEquals("example.org", SlothTopBar.display("https://www.example.org/a/b?c=d#e"));
+        assertEquals("example.org", SlothTopBar.display("http://example.org"));
+        assertEquals("news.example.org", SlothTopBar.display("https://news.example.org/"));
+        assertEquals("the sign-in part is not the site", "example.org",
+                SlothTopBar.display("https://user@example.org/x"));
+        assertEquals("localhost:8080", SlothTopBar.display("http://localhost:8080/app"));
+        assertEquals("a search phrase stays a search phrase", "sloth facts",
+                SlothTopBar.display("sloth facts"));
+        assertEquals("about:blank", SlothTopBar.display("about:blank"));
+        assertEquals("", SlothTopBar.display(null));
+    }
+
+    @Test
+    public void goSendsEveryCharacterTypedNotTheShortForm() {
+        TestActivity activity = build();
+        activity.binding.urlBar.setText("https://example.org/start");
+        SlothShell.own(activity);
+        EditText field = findAddress(overlayOf(activity));
+        field.requestFocus();
+        field.setText("https://sloth.example/a/long/path?q=1");
+        DrawerFace.last = null;
+        field.onEditorAction(android.view.inputmethod.EditorInfo.IME_ACTION_GO);
+        assertEquals("the browser was handed the whole thing", "https://sloth.example/a/long/path?q=1",
+                DrawerFace.last);
+    }
+
+    @Test
+    public void aFieldBeingTypedInIsNeverWrittenOver() {
+        TestActivity activity = build();
+        activity.binding.urlBar.setText("https://example.org/start");
+        SlothShell.own(activity);
+        EditText field = findAddress(overlayOf(activity));
+        field.requestFocus();
+        field.setText("half a thou");
+        activity.binding.urlBar.setText("https://example.org/next");
+        SlothShell.tick();
+        assertEquals("the page moved on, the typing stays", "half a thou", field.getText().toString());
+        assertNotNull("while the drawer's line follows the page, not the typing",
+                findChip(drawerOf(activity), "https://example.org/next"));
     }
 
 }

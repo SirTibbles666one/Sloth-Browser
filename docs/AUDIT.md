@@ -232,3 +232,14 @@ Open: the names this relies on (`getProgressDelegate`, `setProgressDelegate`,
 `GeckoSession$ProgressDelegate`, `stop`) are GeckoView's public API, but `shell_refs.py` has not
 checked them against the shipped APK, which is not here. If the app's GeckoView is minified,
 the wrapper is simply not installed and the bar behaves as before; the log says so.
+
+## The address at rest, and the sloth that did not fit
+
+- **The idle field shows the site, not the address.** `example.org`, as phone browsers show it;
+  the whole address on focus, on copy, and in the drawer's head line. The bar sends what was typed
+  before it lets go of focus, because letting go restores the short form - the test
+  `goSendsEveryCharacterTypedNotTheShortForm` fails if those two lines are swapped.
+- **The painted sloth was squeezed into the bar.** The scene sizes him by width and places him by
+  height, so at bar height his head stuck up over the search field and his branch showed under
+  it, in every render of the shut and strip states. He now fades in between 2.6 and 3.2 of his
+  own heights of panel, and a bar-height scene has none of his pixels.

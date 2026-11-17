@@ -37,7 +37,9 @@ grows it into the drawer, which rests at one of three heights - shut, the 64 dp 
 the whole drawer fitted to what it holds. A sideways flick across the field changes tab.
 
 **The bar** (`SlothTopBar`) is a search field first: the field takes the width, with the site's
-padlock or a magnifier at its start and reload at its end (clear replaces reload while you type).
+padlock or a magnifier at its start and reload at its end. At rest it shows the site alone
+(`example.org`); tap in and the whole address is there to edit, and long-pressing copies the whole
+address, never the short form (clear replaces reload while you type).
 While a page loads, a line along the field's bottom edge shows how far it has got and reload
 becomes Stop; both come from GeckoView's own progress delegate (`SlothProgress`), which the shell
 wraps so the app's delegate still hears every call. Beside it, the tab count - the number in a drawn rounded square - opens the
@@ -78,6 +80,8 @@ Written down because each one cost a shipped build:
   up into a row.
 - **A label is `maxLines(1)`, never `singleLine`.** A single-line TextView with an ellipsis drew no
   text at all in the render; the old shortcut row shipped with icons and no words because of it.
+- **Send what was typed before letting go of focus.** The idle field shows a short form, and losing
+  focus puts it back: clearing focus first would hand the browser the site instead of the address.
 - **The full seat is measured when it is needed.** A height remembered from an earlier layout -
   or from while the strip had the list hidden - opened the drawer cut off halfway through it.
 - **The strip has two thresholds.** One threshold meant a slow drag flipped between strip and
@@ -95,7 +99,7 @@ Written down because each one cost a shipped build:
 ## Tests
 
 `tests/` is a Robolectric harness that renders the shell on the JVM in native graphics mode and
-asserts behaviour rather than pixels: 225 tests at the last build, including the drag, the peek
+asserts behaviour rather than pixels: 229 tests at the last build, including the drag, the peek
 hysteresis, the settings bindings, the diagnostics report, the back order and the drawn icons.
 
 ```sh

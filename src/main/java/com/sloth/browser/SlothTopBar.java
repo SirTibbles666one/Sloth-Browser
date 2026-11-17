@@ -72,6 +72,8 @@ final class SlothTopBar {
     private SlothIcons reloadIcon;
     private View progressLine;
     private boolean loading;
+    /** The page's real address. The field shows only its site until you tap in to edit it. */
+    private String raw = "";
     private TextView countFace;
     private View countButton;
     private View menu;
@@ -114,6 +116,63 @@ final class SlothTopBar {
 
     View pill() {
         return pill;
+    }
+
+    /**
+     * The page's address, from the browser. While the field is idle it shows the site alone -
+     * {@code example.org}, not {@code https://www.example.org/a/b?c} - and the whole address comes
+     * back the moment you tap in. A field being typed in is never written over.
+     */
+    void showAddress(String url) {
+        raw = url == null ? "" : url.trim();
+        if (!field.hasFocus()) {
+            String shown = display(raw);
+            if (!shown.contentEquals(field.getText())) {
+                field.setText(shown);
+            }
+            describeSite(raw);
+        }
+    }
+
+    /** The page's address as the browser last reported it, whatever is being typed. */
+    String pageAddress() {
+        return raw;
+    }
+
+    /** The real address, or what is being typed: never the shortened form. */
+    String address() {
+        return field.hasFocus() ? String.valueOf(field.getText()) : raw;
+    }
+
+    /**
+     * The site part of an address, the way phone browsers show it at rest: no scheme, no
+     * "www.", no path. Anything that is not an address - a search phrase, about:blank - is
+     * shown as it is. Whether the connection is secure is said by the padlock, not the text.
+     */
+    static String display(String url) {
+        String value = url == null ? "" : url.trim();
+        String lower = value.toLowerCase(java.util.Locale.UK);
+        if (!(lower.startsWith("http://") || lower.startsWith("https://"))
+                || !SlothShell.looksLikeAddress(value)) {
+            return value;
+        }
+        String rest = value.substring(value.indexOf("://") + 3);
+        int end = rest.length();
+        for (char stop : new char[]{'/', '?', '#'}) {
+            int at = rest.indexOf(stop);
+            if (at >= 0 && at < end) {
+                end = at;
+            }
+        }
+        String host = rest.substring(0, end);
+        int user = host.lastIndexOf('@');
+        if (user >= 0) {
+            host = host.substring(user + 1);
+        }
+        if (host.toLowerCase(java.util.Locale.UK).startsWith("www.") && host.length() > 4) {
+            host = host.substring(4);
+        }
+        return host.isEmpty() ? value : host;
     }
 
     View countButton() {
@@ -293,15 +352,23 @@ final class SlothTopBar {
                 if (typed == null || typed.toString().trim().length() == 0) {
                     return false;
                 }
+                // sent first, while the field still holds every character typed: letting go of
+                // focus puts the short form back in the field
+                raw = typed.toString().trim();
+                host.go(field);
                 field.clearFocus();
                 hideKeyboard();
-                host.go(field);
                 return true;
             }
         });
         field.setOnFocusChangeListener(new View.OnFocusChangeListener() {
             @Override
             public void onFocusChange(View v, boolean hasFocus) {
+                // tap in: the whole address, selected, ready to replace; leave: the site again
+                String wanted = hasFocus ? raw : display(raw);
+                if (!wanted.contentEquals(field.getText())) {
+                    field.setText(wanted);
+                }
                 if (hasFocus) {
                     field.selectAll();
                 }
@@ -316,7 +383,7 @@ final class SlothTopBar {
 
             public void onTextChanged(CharSequence s, int a, int b, int c) {
                 showEditing(field.hasFocus());
-                describeSite(s == null ? "" : s.toString());
+                describeSite(field.hasFocus() ? (s == null ? "" : s.toString()) : raw);
             }
 
             public void afterTextChanged(android.text.Editable s) {
@@ -325,7 +392,7 @@ final class SlothTopBar {
         field.setOnLongClickListener(new View.OnLongClickListener() {
             @Override
             public boolean onLongClick(View v) {
-                return copy(field.getText());
+                return copy(address());
             }
         });
         // a sideways swipe along the field walks the tabs; until the field has focus it is a

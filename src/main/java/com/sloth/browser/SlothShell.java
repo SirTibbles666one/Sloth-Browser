@@ -3386,11 +3386,10 @@ public final class SlothShell {
         }
         try {
             View real = resolve(activity, "urlBar");
-            if (real instanceof EditText && address != null && !address.hasFocus()) {
+            if (real instanceof EditText && topBar != null) {
                 CharSequence text = ((EditText) real).getText();
-                if (text != null && !text.toString().contentEquals(address.getText())) {
-                    address.setText(text.toString());
-                    address.setSelection(address.getText().length());
+                if (text != null) {
+                    topBar.showAddress(text.toString());
                 }
             }
             // the app can leave the page at zero height on its own - a restart, a cleared
@@ -3405,7 +3404,7 @@ public final class SlothShell {
             if (board != null && address != null) {
                 // the drawer's address line is the same fact as the bar's, so it is kept
                 // the same way: on the timer, not only when the drawer is rebuilt
-                board.onSite(String.valueOf(address.getText()));
+                board.onSite(topBar == null ? String.valueOf(address.getText()) : topBar.pageAddress());
             }
             int count = tabCount(activity);
             if (topBar != null) {
@@ -3434,11 +3433,10 @@ public final class SlothShell {
         try {
             ensurePageVisible(activity);
             View real = resolve(activity, "urlBar");
-            if (real instanceof EditText && address != null && !address.hasFocus()) {
+            if (real instanceof EditText && topBar != null) {
                 CharSequence text = ((EditText) real).getText();
-                if (text != null && !text.toString().contentEquals(address.getText())) {
-                    address.setText(text.toString());
-                    address.setSelection(address.getText().length());
+                if (text != null) {
+                    topBar.showAddress(text.toString());
                 }
             }
 

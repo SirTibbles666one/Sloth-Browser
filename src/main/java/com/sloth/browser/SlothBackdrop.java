@@ -39,6 +39,18 @@ final class SlothBackdrop extends View {
         return Math.max(width * 0.20f, 64f);
     }
 
+    /** Below this many sloth-heights of panel there is no room for him at all. */
+    static final float ROOM_FROM = 2.6f;
+    /** And from this many he is fully there. */
+    static final float ROOM_FULL = 3.2f;
+
+    /** 0 when the panel is too short to hold the sloth, 1 when it is tall enough, a ramp between. */
+    static float slothPresence(float width, float height) {
+        float size = slothSize(width);
+        float t = (height / size - ROOM_FROM) / (ROOM_FULL - ROOM_FROM);
+        return Math.max(0f, Math.min(1f, t));
+    }
+
     /** Body colour, mixed from the palette so he never looks pasted on. */
     static int bodyColour() {
         return SlothTheme.frosted()
@@ -127,7 +139,17 @@ final class SlothBackdrop extends View {
         drawTexture(canvas, w, h);
         int near = canvas.save();
         canvas.translate(0, -h * PARALLAX * depth * 1.35f);
-        drawSloth(canvas, w, h);
+        // he is sized by the width and placed by the height, so a panel that is only the bar
+        // squeezed him into it: a head over the search field and a branch under it. He arrives
+        // once there is room for him, fading in so a drag through the threshold has no pop
+        float presence = slothPresence(w, h);
+        if (presence >= 0.999f) {
+            drawSloth(canvas, w, h);
+        } else if (presence > 0f) {
+            int faded = canvas.saveLayerAlpha(0, 0, w, h, Math.round(255 * presence));
+            drawSloth(canvas, w, h);
+            canvas.restoreToCount(faded);
+        }
 
         // fireflies
         paint.setColor((0x55 << 24) | (accent & 0x00FFFFFF));
