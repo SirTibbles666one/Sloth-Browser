@@ -112,8 +112,6 @@ public final class SlothShell {
 
     /* ------------------------------------------------------------------ state */
     private static View overlay;
-    private static TextView clock;
-    private static LinearLayout tabRow;
     private static View drawer;
     private static EditText address;
     private static int peekPx;
@@ -130,7 +128,6 @@ public final class SlothShell {
     private static View dock;
     private static View main;
     private static int dockH = -1, dockTop, dockBottom, dockPadL, dockPadR, mainH;
-    private static View pill;
     private static View appRoot;
     private static final java.util.HashMap<String, View> lookups = new java.util.HashMap<>();
 /** The app's own bar. Always collapsed: nothing in this shell needs it. */
@@ -159,13 +156,14 @@ public final class SlothShell {
     private static int measuredContentH;
     private static ScrollView scroller;
     private static SlothBoard board;
-    private static View backGlyph;
     /** Controls that recede as the bar becomes the dashboard. */
     private static final java.util.ArrayList<View> chromeViews = new java.util.ArrayList<>();
     /** 1 when collapsed, →0 as the drawer takes over the surface. */
     private static float chromeFade = 1f;
-    /** The drawer footer is pinned, so it must not appear before there is room for it. */
-    private static View footRow;
+    /** The search-first bar: field, tab count, menu. */
+    private static SlothTopBar topBar;
+    /** The drawer's first seat: one row of tabs. */
+    private static SlothStrip strip;
     /** Swatches for every palette; the chip opens this instead of cycling ten times. */
     private static View paletteSheet;
     private static View widgetSheet;
@@ -187,26 +185,15 @@ public final class SlothShell {
     /** True while the sheet is showing the strip rather than the board. */
     private static boolean peekShowing;
     /** The shadow and hinge line at the sheet's top edge. */
-    /** The address field, which fades with the bar rather than staying lit. */
-    private static View addressPillView;
     /** What the strip was last built from, so an unchanged strip is not rebuilt. */
-    private static String lastPeekSignature = "";
-    /** The peek: close, the open tabs, a new tab - the whole of a half-open sheet. */
-    private static HorizontalScrollView peekScroll;
-    private static LinearLayout peekRow;
     /** One drag for the strip and everything on it, so it starts wherever the finger lands. */
     private static SlothDrag stripDrag;
     private static View barWrapView;
-    private static View fwdGlyph;
-    private static TextView clearTag;
-    private static TextView TabFace;
     private static float downY;
     private static float startH;
     private static boolean dragging;
     /** The union's own state, so a drag does not re-allocate its backgrounds per frame. */
     private static boolean unionOpen;
-    /** Whether the board is showing its compact form, for the same reason. */
-    private static boolean boardCompact;
     /** A drag collects moves and applies the latest one once per main-loop turn. */
     private static int dragPending = Integer.MIN_VALUE;
     private static boolean dragPosted;
@@ -480,8 +467,6 @@ public final class SlothShell {
         lookups.clear();
         chromeViews.clear();
         overlay = null;
-        clock = null;
-        tabRow = null;
         drawer = null;
         address = null;
         dock = null;
@@ -490,18 +475,14 @@ public final class SlothShell {
         surfaceView = null;
         board = null;
         scroller = null;
-        backGlyph = null;
-        fwdGlyph = null;
-        footRow = null;
+        topBar = null;
+        strip = null;
         barView = null;
         barWrapView = null;
         paletteSheet = null;
         widgetSheet = null;
         settingsPage = null;
         diagPage = null;
-        clearTag = null;
-        TabFace = null;
-        pill = null;
         dockH = -1;
         mainH = 0;
         peekPx = 0;
@@ -518,18 +499,14 @@ public final class SlothShell {
         measuredContentH = 0;
         dragging = false;
         unionOpen = false;
-        boardCompact = false;
         dragPending = Integer.MIN_VALUE;
         dragPosted = false;
         downY = 0;
         startH = 0;
         chromeFade = 1f;
         // the peek and the painted scene came later; the release has to keep up with them
-        peekScroll = null;
-        peekRow = null;
         stripDrag = null;
         peekShowing = false;
-        lastPeekSignature = "";
         backdropView = null;
         // the page root is the whole browser view tree: holding it after detach keeps a
         // GeckoView alive, and keeping its padding makes the next window inherit the last one's
@@ -546,6 +523,7 @@ public final class SlothShell {
         animating = false;
         lastProbe = 0;
         SlothCover.forget();
+        SlothProgress.forget();
         owner = null;
     }
 
@@ -669,9 +647,12 @@ public final class SlothShell {
                 }
             });
 
-            LinearLayout bar = buildBar(activity);
-            bar.setTag("bar");
+            topBar = new SlothTopBar(activity, barHost(activity));
+            View bar = topBar.view();
             barView = bar;
+            address = topBar.field();
+            chromeViews.clear();
+            java.util.Collections.addAll(chromeViews, topBar.controls());
 
             // ------------------------------------------------- the bar drags itself
             // No handle and no scrim: the bar is the affordance. SlothBar intercepts
@@ -777,7 +758,8 @@ public final class SlothShell {
                     if (!open) {
                         leaveSettings(activity);
                     }
-                    animateTo(activity, open ? 0 : openHeight(activity));
+                    // a tap on the bar is the drawer's front door: the strip of tabs first
+                    animateTo(activity, open ? 0 : peekPx);
                 }
             };
             barWrap.setListener(new SlothLabel(shellDrag, "bar"));
@@ -830,36 +812,31 @@ public final class SlothShell {
             board.onSite(thisSite(activity));
             board.onTabCount(tabCount(activity));
             tintStatusBar(activity);
-            refinePeek(activity);
             board.onTabPicked(new Runnable() {
                 @Override
                 public void run() {
                     animateTo(activity, 0);
                 }
             });
-            peekRow = new LinearLayout(activity);
-            peekRow.setOrientation(LinearLayout.HORIZONTAL);
-            peekRow.setGravity(Gravity.CENTER_VERTICAL);
-            peekRow.setPadding(0, dp(activity, 2), 0, dp(activity, 2));
-            peekScroll = new HorizontalScrollView(activity);
-            peekScroll.setHorizontalScrollBarEnabled(false);
-            peekScroll.setVerticalScrollBarEnabled(false);
-            peekScroll.setOverScrollMode(View.OVER_SCROLL_NEVER);
-            peekScroll.setTag("peek-strip");
-            peekScroll.addView(peekRow, new FrameLayout.LayoutParams(
-                    ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT));
-            peekScroll.setVisibility(View.GONE);
-            // sideways walks the tabs; up and down belongs to the sheet. The listener goes
-            // on the scroll container AND every square inside it: a touch that lands on a
-            // tab is delivered to the tab, and the container's own listener never saw the
-            // gesture - which is why a vertical drag only worked on the gaps between tabs.
+            // the first seat is a row of tabs; up and down on any of it belongs to the sheet
+            strip = new SlothStrip(activity, stripHost(activity));
             stripDrag = new SlothDrag(new SlothLabel(shellDrag, "strip"));
-            peekScroll.setOnTouchListener(stripDrag);
-            holder.addView(peekScroll, new LinearLayout.LayoutParams(
+            strip.setDrag(stripDrag);
+            holder.addView(strip.view(), new LinearLayout.LayoutParams(
                     ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
 
             scroller.addView(board.view());
-            board.setDragSink(new SlothLabel(shellDrag, "board"));
+            board.onResize(new Runnable() {
+                @Override
+                public void run() {
+                    // the widgets folded or unfolded: a drawer at the top grows or shrinks with
+                    // them, so the shelf never opens under the bottom edge
+                    if (drawer != null && !dragging
+                            && drawer.getLayoutParams().height > peekPx + dp(activity, 8)) {
+                        animateTo(activity, fullSeat(activity));
+                    }
+                }
+            });
             board.setEditSink(new Runnable() {
                 @Override
                 public void run() {
@@ -873,45 +850,6 @@ public final class SlothShell {
             holder.addView(scroller, new LinearLayout.LayoutParams(
                     ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f));
 
-            LinearLayout foot = new LinearLayout(activity);
-            foot.setOrientation(LinearLayout.HORIZONTAL);
-            foot.setPadding(0, dp(activity, 6), 0, dp(activity, 12));
-            // the mock's footer: Settings on the left, widgets on the right, and the
-            // palette in between - the one control that changes the whole surface
-            View themeChip = chip(activity, SlothTheme.name(), new View.OnClickListener() {
-                @Override
-                public void onClick(View v) {
-                    if (paletteSheet != null) {
-                        boolean showing = paletteSheet.getVisibility() == View.VISIBLE;
-                        if (!showing) {
-                            paletteSheet.bringToFront();
-                        }
-                        paletteSheet.setVisibility(showing ? View.GONE : View.VISIBLE);
-                    }
-                }
-            });
-            themeChip.setTag("palette-chip");
-            foot.addView(themeChip, new LinearLayout.LayoutParams(0,
-                    ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
-            View settingsChip = chip(activity, "Settings", new View.OnClickListener() {
-                @Override
-                public void onClick(View v) {
-                    openSettingsPage(activity);
-                }
-            });
-            foot.addView(settingsChip, new LinearLayout.LayoutParams(0,
-                    ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
-            View addChip = chip(activity, "Add widget", new View.OnClickListener() {
-                @Override
-                public void onClick(View v) {
-                    if (widgetSheet != null) {
-                        widgetSheet.bringToFront();
-                        widgetSheet.setVisibility(View.VISIBLE);
-                    }
-                }
-            });
-            foot.addView(addChip, new LinearLayout.LayoutParams(0,
-                    ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
             widgetSheet = widgetChooser(activity);
             sheet.addView(widgetSheet);
             settingsPage = SlothSettings.build(activity, new Runnable() {
@@ -974,15 +912,9 @@ public final class SlothShell {
                     ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
             diagPage.setVisibility(View.GONE);
             paletteSheet = palettePicker(activity);
-            footRow = foot;
-            // no fade band and no grabber inside the sheet: the header above it is the
-            // handle, and a fade says the panel is cut rather than continued
-            holder.addView(foot);
-            // the bottom line of the sheet is a handle. The footer keeps its own height and
-            // the band underneath it belongs to the drag, so a pull started there is the
-            // sheet's and a tap on the footer is still the footer's
-            foot.setPadding(foot.getPaddingLeft(), foot.getPaddingTop(),
-                    foot.getPaddingRight(), dp(activity, 30));
+            // the sheet's bottom band is a handle, so the list keeps its last row above it
+            scroller.setPadding(0, 0, 0, dp(activity, 30));
+            scroller.setClipToPadding(false);
             // the band was invisible, which is right for a gesture and wrong for discovery:
             // a 36 x 3 dp line marks it without becoming the grabber band that was removed
             FrameLayout gripWell = new FrameLayout(activity);
@@ -1042,9 +974,8 @@ public final class SlothShell {
             if (statusScrim != null) {
                 paintStatusBar(activity);
             }
-            // the peek is the strip: grip, one row. refinePeek() may adjust it once the
-            // board has measured itself, but the ceiling is the strip, not a dashboard
-            peekPx = dp(activity, 72);
+            // the first seat is exactly the strip: one 44 dp row of tabs and its breathing room
+            peekPx = dp(activity, 64);
 
             // everything in the shell starts below the system status bar. Inside the
             // surface the bar needs no margin: the surface carries the status-bar gap,
@@ -1136,130 +1067,7 @@ public final class SlothShell {
     }
 
 
-    /* ------------------------------------------------------------------- bar */
-    /**
-     * The redesigned top bar: one capsule, an address pill inset inside it, and
-     * actions that fade when the browser says they cannot be used.
-     */
-    private static LinearLayout buildBar(final Activity activity) {
-        LinearLayout bar = new LinearLayout(activity);
-        bar.setOrientation(LinearLayout.HORIZONTAL);
-        bar.setGravity(Gravity.CENTER_VERTICAL);
-        bar.setPadding(dp(activity, 4), 0, dp(activity, 4), 0);
-        bar.setElevation(dp(activity, 6));
-        // the surface owns the only fill: a bar with its own capsule draws a second
-        // rounded rect inside the panel, which is a bar inside a box again
-        bar.setBackground(null);
-
-        FrameLayout.LayoutParams barLp = new FrameLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, dp(activity, 56), Gravity.TOP);
-        barLp.setMargins(dp(activity, 8), dp(activity, 8), dp(activity, 8), 0);
-        bar.setLayoutParams(barLp);
-
-        backGlyph = barIcon(activity, SlothIcons.Kind.BACK, "Back", "btnBack", 30);
-        fwdGlyph = barIcon(activity, SlothIcons.Kind.FORWARD, "Forward", "btnFwd", 30);
-        bar.addView(backGlyph);
-        bar.addView(fwdGlyph);
-        bar.addView(addressPill(activity));
-
-        View tabs = tabChip(activity);
-        bar.addView(tabs);
-        View reload = barIcon(activity, SlothIcons.Kind.RELOAD, "Reload", "btnReload", 30);
-        reload.setLongClickable(true);
-        reload.setOnLongClickListener(new View.OnLongClickListener() {
-            @Override
-            public boolean onLongClick(View v) {
-                return stop(activity);
-            }
-        });
-        bar.addView(reload);
-        View newTab = barIcon(activity, SlothIcons.Kind.PLUS, "New tab", "btnPlus", 30);
-        bar.addView(newTab);
-        // the three dots open the drawer rather than the app's own menu: that menu
-        // draws into the panel we keep collapsed, and this shell is meant to stand alone
-        View menu = barIcon(activity, SlothIcons.Kind.MENU, "Menu", "btnMenu", 30);
-        menu.setOnClickListener(new View.OnClickListener() {
-            @Override
-            public void onClick(View v) {
-                animateTo(activity, openHeight(activity));
-            }
-        });
-        bar.addView(menu);
-        chromeViews.clear();
-        chromeViews.add(backGlyph);
-        chromeViews.add(fwdGlyph);
-        chromeViews.add(pillOf(bar));
-        chromeViews.add(tabs);
-        chromeViews.add(reload);
-        chromeViews.add(newTab);
-        chromeViews.add(menu);
-        return bar;
-    }
-
-    /** The address field, found once so the fade does not have to know its position. */
-    private static View pillOf(ViewGroup bar) {
-        for (int i = 0; i < bar.getChildCount(); i++) {
-            View child = bar.getChildAt(i);
-            if (child.getContentDescription() == null && child.isClickable()) {
-                return child;
-            }
-        }
-        return null;
-    }
-
-    /** A count you can tap, so the drawer is not only reachable by the handle. */
-    private static View tabChip(final Activity activity) {
-        LinearLayout chip = new LinearLayout(activity);
-        chip.setOrientation(LinearLayout.HORIZONTAL);
-        chip.setGravity(Gravity.CENTER);
-        chip.setContentDescription("Tabs");
-        chip.setClickable(true);
-        chip.setFocusable(true);
-        chip.setBackground(pressState(activity));
-        chip.setLayoutParams(new LinearLayout.LayoutParams(dp(activity, 40), dp(activity, 44)));
-        chip.setOnClickListener(new View.OnClickListener() {
-            @Override
-            public void onClick(View v) {
-                animateTo(activity, openHeight(activity));
-            }
-        });
-        // the tab count opens the drawer; holding it opens the app's own switcher
-        chip.setLongClickable(true);
-        chip.setOnLongClickListener(new View.OnLongClickListener() {
-            @Override
-            public boolean onLongClick(View v) {
-                try {
-                    call(activity, "showSwitcher", new Class<?>[0], new Object[0]);
-                    return true;
-                } catch (Throwable ignored) {
-                    return false;
-                }
-            }
-        });
-
-        TabFace = new TextView(activity);
-        TabFace.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f);
-        TabFace.setTextColor(INK);
-        TabFace.setTypeface(TabFace.getTypeface(), android.graphics.Typeface.BOLD);
-        TabFace.setGravity(Gravity.CENTER);
-        TabFace.setText("1");
-        // a number alone reads as a stray counter; a stack of tabs beside it says what is
-        // being counted without spending a word
-        LinearLayout badge = new LinearLayout(activity);
-        badge.setOrientation(LinearLayout.HORIZONTAL);
-        badge.setGravity(Gravity.CENTER);
-        badge.setBackground(round(activity, 8, SlothTheme.lineAt(0x1C), 0));
-        SlothIcons stack = SlothIcons.of(activity, SlothIcons.Kind.TABS, 9, SlothTheme.dim());
-        badge.addView(stack);
-        LinearLayout.LayoutParams faceLp = new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
-        faceLp.leftMargin = dp(activity, 3);
-        badge.addView(TabFace, faceLp);
-        chip.addView(badge, new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.WRAP_CONTENT, dp(activity, 24)));
-        return chip;
-    }
-/** When the last cover probe ran, so a busy screen does not fill the log with probes. */
+    /** When the last cover probe ran, so a busy screen does not fill the log with probes. */
     private static long lastProbe;
 
     /**
@@ -2515,6 +2323,13 @@ public final class SlothShell {
     }
 
     private static boolean stop(Activity activity) {
+        // the engine's own stop first; the app's routine is the fallback for a build without one
+        if (SlothProgress.stop(activity)) {
+            if (topBar != null) {
+                topBar.setLoading(false);
+            }
+            return true;
+        }
         try {
             java.lang.reflect.Method m = Class.forName("com.sloth.browser.BarUnion")
                     .getDeclaredMethod("stop", Activity.class);
@@ -2535,6 +2350,131 @@ public final class SlothShell {
      * instead of wrapping: a flick that lands you on the tab you were trying to leave is
      * worse than one that does nothing.</p>
      */
+    /** The engine's progress, drawn on the bar. Reads topBar at call time: a rebuild replaces it. */
+    private static final SlothProgress.Listener PROGRESS = new SlothProgress.Listener() {
+        @Override
+        public void started() {
+            if (topBar != null) {
+                topBar.setLoading(true);
+            }
+        }
+
+        @Override
+        public void progress(int percent) {
+            if (topBar != null) {
+                topBar.setProgress(percent);
+            }
+        }
+
+        @Override
+        public void stopped() {
+            if (topBar != null) {
+                topBar.setLoading(false);
+            }
+        }
+    };
+
+    /** What the bar asks of the browser, answered through the app's own controls. */
+    private static SlothTopBar.Host barHost(final Activity activity) {
+        return new SlothTopBar.Host() {
+            @Override
+            public void go(EditText field) {
+                // DrawerFace.go is the app's own routine: it trims, hides the keyboard and decides
+                // between an address and a search. The activity's private go is the fallback.
+                if (!navigate(activity, field)) {
+                    try {
+                        call(activity, "go", new Class<?>[]{String.class},
+                                new Object[]{field.getText().toString().trim()});
+                    } catch (Throwable t) {
+                        SlothLog.warn("nowhere to send the address: " + t.getClass().getSimpleName());
+                    }
+                }
+            }
+
+            @Override
+            public void showTabs() {
+                // the count is a toggle for the strip: tap to see the tabs, tap again to put them away
+                int h = drawer == null ? 0 : drawer.getLayoutParams().height;
+                leaveSettings(activity);
+                animateTo(activity, h > 0 && h <= peekPx + dp(activity, 8) ? 0 : peekPx);
+            }
+
+            @Override
+            public boolean showSwitcher() {
+                try {
+                    call(activity, "showSwitcher", new Class<?>[0], new Object[0]);
+                    return true;
+                } catch (Throwable ignored) {
+                    return false;
+                }
+            }
+
+            @Override
+            public void showMenu() {
+                int h = drawer == null ? 0 : drawer.getLayoutParams().height;
+                leaveSettings(activity);
+                animateTo(activity, h > peekPx + dp(activity, 8) ? 0 : fullSeat(activity));
+            }
+
+            @Override
+            public void reload() {
+                tap(activity, "btnReload");
+            }
+
+            @Override
+            public boolean stop() {
+                return SlothShell.stop(activity);
+            }
+
+            @Override
+            public void siteInfo() {
+                tap(activity, "pageInfo");
+            }
+
+            @Override
+            public void switchTab(int direction) {
+                SlothShell.switchTab(activity, direction);
+            }
+        };
+    }
+
+    /** What the strip of tabs asks of the browser. */
+    private static SlothStrip.Host stripHost(final Activity activity) {
+        return new SlothStrip.Host() {
+            @Override
+            public void close() {
+                animateTo(activity, 0);
+            }
+
+            @Override
+            public void pick(View chip) {
+                chip.performClick();
+                animateTo(activity, 0);
+            }
+
+            @Override
+            public void newTab() {
+                tap(activity, "btnPlus");
+                animateTo(activity, 0);
+            }
+
+            @Override
+            public boolean closeTab(View chip) {
+                View close = byTagDeep(chip, "close");
+                if (close == null) {
+                    SlothLog.warn("this browser offers no close on a tab");
+                    return false;
+                }
+                close.performClick();
+                SlothLog.note("closed a tab from the strip");
+                if (strip != null) {
+                    strip.fill(resolveStrip(activity));
+                }
+                return true;
+            }
+        };
+    }
+
     static boolean swipeTab(Activity activity, boolean forward) {
         ViewGroup chips = resolveStrip(activity);
         if (chips == null || chips.getChildCount() < 2) {
@@ -2577,213 +2517,7 @@ public final class SlothShell {
                 && !name.endsWith("."));
     }
 
-    /** Deep surface, hairline edge, enough contrast to read against a page. */
-
-    private static View addressPill(final Activity activity) {
-        LinearLayout pill = new LinearLayout(activity);
-        pill.setOrientation(LinearLayout.HORIZONTAL);
-        pill.setGravity(Gravity.CENTER_VERTICAL);
-        pill.setPadding(dp(activity, 12), 0, dp(activity, 6), 0);
-        GradientDrawable bg = new GradientDrawable(
-                GradientDrawable.Orientation.TOP_BOTTOM,
-                new int[]{SlothTheme.lineAt(0x0E), SlothTheme.field()});
-        bg.setCornerRadius(dp(activity, 20));
-        bg.setStroke(Math.max(1, dp(activity, 1)), SlothTheme.lineAt(0x2E));
-        pill.setBackground(bg);
-        pill.setLayoutParams(new LinearLayout.LayoutParams(0,
-                dp(activity, 40), 1f));
-        // the bar steps back as the sheet arrives; the field used to stay at full weight
-        // and hang there like a lamp left on
-        addressPillView = pill;
-        final GradientDrawable pillBg = bg;
-
-        final SlothIcons lock = SlothIcons.of(activity, SlothIcons.Kind.SEARCH, 15,
-                SlothTheme.muted());
-        lock.setContentDescription("Site settings");
-        lock.setClickable(true);
-        lock.setFocusable(true);
-        lock.setOnClickListener(new View.OnClickListener() {
-            @Override
-            public void onClick(View v) {
-                tap(activity, "pageInfo");
-            }
-        });
-        LinearLayout.LayoutParams lockLp = new LinearLayout.LayoutParams(
-                dp(activity, 26), dp(activity, 34));
-        pill.addView(lock, lockLp);
-
-        final EditText input = new EditText(activity);
-        input.setSingleLine(true);
-        input.setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f);
-        input.setTextColor(INK);
-        input.setHintTextColor(DIM);
-        input.setHint("Search or open");
-        input.setContentDescription("Search or open");
-        input.setBackground(null);
-        input.setPadding(0, 0, 0, 0);
-        input.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_URI);
-        input.setImeOptions(EditorInfo.IME_ACTION_GO);
-        LinearLayout.LayoutParams inputLp = new LinearLayout.LayoutParams(0,
-                ViewGroup.LayoutParams.MATCH_PARENT, 1f);
-        inputLp.leftMargin = dp(activity, 8);
-        input.setLayoutParams(inputLp);
-        input.setOnEditorActionListener(new TextView.OnEditorActionListener() {
-            @Override
-            public boolean onEditorAction(TextView v, int actionId, KeyEvent event) {
-                String text = input.getText() == null ? "" : input.getText().toString().trim();
-                if (text.length() == 0) {
-                    return false;
-                }
-                input.clearFocus();
-                try {
-                    Object ime = activity.getSystemService(Context.INPUT_METHOD_SERVICE);
-                    if (ime instanceof InputMethodManager) {
-                        ((InputMethodManager) ime).hideSoftInputFromWindow(input.getWindowToken(), 0);
-                    }
-                } catch (Throwable ignored) {
-                }
-                // DrawerFace.go is the app's own navigation routine: it trims the text,
-                // hides the keyboard and decides between a URL and a search. Calling the
-                // activity's "go" directly skipped all of that.
-                if (!navigate(activity, input)) {
-                    // last resort: whichever "go" the activity exposes, private or not
-                    try {
-                        call(activity, "go", new Class<?>[]{String.class}, new Object[]{text});
-                    } catch (Throwable ignored) {
-                    }
-                }
-                return true;
-            }
-        });
-        // a browser selects the whole address when you touch it
-        input.setOnFocusChangeListener(new View.OnFocusChangeListener() {
-            @Override
-            public void onFocusChange(View v, boolean hasFocus) {
-                if (hasFocus) {
-                    input.selectAll();
-                }
-                pillBg.setStroke(Math.max(1, dp(activity, 1)),
-                        hasFocus ? SlothTheme.lineAt(0x8C) : SlothTheme.lineAt(0x2E));
-                if (clearTag != null) {
-                    clearTag.setVisibility(hasFocus && input.getText().length() > 0
-                            ? View.VISIBLE : View.GONE);
-                }
-            }
-        });
-        pill.addView(input);
-        address = input;
-        // a fresh tab has no address, so no padlock: the watcher only fires on a change,
-        // and "empty" to "empty" is not one
-        lock.setClickable(false);
-        lock.setFocusable(false);
-        lock.setContentDescription("Search");
-        input.setOnLongClickListener(new View.OnLongClickListener() {
-            @Override
-            public boolean onLongClick(View v) {
-                CharSequence value = input.getText();
-                if (value == null || value.length() == 0) {
-                    return false;
-                }
-                try {
-                    android.content.ClipboardManager clipboard =
-                            (android.content.ClipboardManager) activity.getSystemService(Context.CLIPBOARD_SERVICE);
-                    if (clipboard != null) {
-                        clipboard.setPrimaryClip(android.content.ClipData.newPlainText("Address", value));
-                        Toast.makeText(activity, "Address copied", Toast.LENGTH_SHORT).show();
-                        return true;
-                    }
-                } catch (Throwable ignored) {
-                }
-                return false;
-            }
-        });
-        pill.setOnTouchListener(new View.OnTouchListener() {
-            private float downX, downY;
-            private boolean swiped;
-
-            @Override
-            public boolean onTouch(View v, MotionEvent e) {
-                switch (e.getActionMasked()) {
-                    case MotionEvent.ACTION_DOWN:
-                        downX = e.getX();
-                        downY = e.getY();
-                        swiped = false;
-                        return false;
-                    case MotionEvent.ACTION_MOVE:
-                        if (!input.hasFocus()) {
-                            float dx = e.getX() - downX;
-                            float dy = e.getY() - downY;
-                            if (!swiped && Math.abs(dx) > dp(activity, 56)
-                                    && Math.abs(dx) > Math.abs(dy) * 1.5f) {
-                                swiped = true;
-                                switchTab(activity, dx < 0 ? 1 : -1);
-                                return true;
-                            }
-                        }
-                        return false;
-                    default:
-                        return false;
-                }
-            }
-        });
-
-        final TextView clear = new TextView(activity);
-        clear.setText("\u00D7");
-        clear.setTextSize(TypedValue.COMPLEX_UNIT_SP, 15f);
-        clear.setTextColor(DIM);
-        clear.setGravity(Gravity.CENTER);
-        clear.setContentDescription("Clear the address");
-        clear.setLayoutParams(new LinearLayout.LayoutParams(dp(activity, 28), dp(activity, 28)));
-        clear.setVisibility(View.GONE);
-        clear.setOnClickListener(new View.OnClickListener() {
-            @Override
-            public void onClick(View v) {
-                input.setText("");
-                input.requestFocus();
-            }
-        });
-        pill.addView(clear);
-        clearTag = clear;
-
-        input.addTextChangedListener(new android.text.TextWatcher() {
-            public void beforeTextChanged(CharSequence s, int a, int b, int c) {
-            }
-
-            public void onTextChanged(CharSequence s, int a, int b, int c) {
-                if (clearTag != null) {
-                    clearTag.setVisibility(input.hasFocus() && s.length() > 0 ? View.VISIBLE : View.GONE);
-                }
-                if (lock != null) {
-                    boolean ok = secure(s.toString());
-                    // on a new tab the field is a search box: a padlock there claims a
-                    // security state for a page that does not exist yet, so the slot holds
-                    // a magnifier until there is an address to be secure about
-                    boolean address = looksLikeAddress(s.toString());
-                    lock.kind(address ? SlothIcons.Kind.LOCK : SlothIcons.Kind.SEARCH);
-                    lock.setClickable(address);
-                    lock.setFocusable(address);
-                    if (!address) {
-                        lock.tint(SlothTheme.muted());
-                        lock.setContentDescription("Search");
-                        return;
-                    }
-                    // the lock is a lock; an insecure address is said, not painted - a
-                    // second symbol in the same place would just look like a broken lock.
-                    // The colour is the warning: ink when the address is secure, amber when
-                    // it is not, and the description says which
-                    lock.tint(ok ? SlothTheme.dim() : 0xFFE2A05A);
-                    lock.setContentDescription(ok
-                            ? "Site settings, secure connection"
-                            : "Site settings, not a secure address");
-                }
-            }
-
-            public void afterTextChanged(android.text.Editable s) {
-            }
-        });
-        return pill;
-    }
-/** The padding that puts the page's top edge at the bar's bottom edge. */
+    /** The padding that puts the page's top edge at the bar's bottom edge. */
     static int pagePaddingFor(int appRootTop, int surfaceBottom) {
         // the surface already includes the drawer: adding its height again pushed the page
         // a whole drawer further down than the bar
@@ -2857,55 +2591,6 @@ public final class SlothShell {
         if (appRoot.getTranslationY() != 0f) {
             appRoot.setTranslationY(0f);
         }
-    }
-
-    /** https and about: are the quiet ones; plain text is not a secure origin. */
-    private static boolean secure(String url) {
-        String u = url == null ? "" : url.trim().toLowerCase(java.util.Locale.UK);
-        return u.startsWith("https://") || u.startsWith("about:") || u.length() == 0;
-    }
-
-    /**
-     * A bar control: drawn, wired to the app's own button, and fading with the chrome.
-     *
-     * <p>The glyph text is gone from the bar. A chevron and a plus from a text font share
-     * neither stroke width nor optical centre, so the row read as characters sitting next
-     * to a field rather than as controls.</p>
-     */
-    private static View barIcon(final Activity activity, SlothIcons.Kind kind, String label,
-                                final String target, int sizeDp) {
-        SlothIcons view = SlothIcons.of(activity, kind, sizeDp, INK);
-        LinearLayout.LayoutParams lp = (LinearLayout.LayoutParams) view.getLayoutParams();
-        if (lp != null) {
-            // the same breathing room either side of every control, so the row is even
-            lp.leftMargin = dp(activity, 2);
-            lp.rightMargin = dp(activity, 2);
-        }
-        view.setContentDescription(label);
-        view.setBackground(pressState(activity));
-        view.setOnClickListener(new View.OnClickListener() {
-            @Override
-            public void onClick(View v) {
-                tap(activity, target);
-            }
-        });
-        chromeBase.put(view, 1f);
-        return view;
-    }
-
-        /** A round press state without pulling in a drawable resource. */
-    private static android.graphics.drawable.Drawable pressState(Activity activity) {
-        android.graphics.drawable.StateListDrawable states =
-                new android.graphics.drawable.StateListDrawable();
-        GradientDrawable pressed = new GradientDrawable();
-        pressed.setCornerRadius(dp(activity, 22));
-        pressed.setColor(0x22EEF7F1);
-        GradientDrawable idle = new GradientDrawable();
-        idle.setCornerRadius(dp(activity, 22));
-        idle.setColor(0);
-        states.addState(new int[]{android.R.attr.state_pressed}, pressed);
-        states.addState(new int[]{}, idle);
-        return states;
     }
 
     /* --------------------------------------------------------------- drawer ops */
@@ -2984,7 +2669,7 @@ public final class SlothShell {
             // showed the drawer stretched past its content into a band of empty paper
             // a little air under the last row, not a band: the panel must not open taller
             // than what it holds or the extra reads as an empty strip
-            int contentCap = measuredContentH + dp(activity, 10);
+            int contentCap = measuredContentH + dp(activity, 30) + navInset(activity) + dp(activity, 6);
             if (contentCap < h) {
                 h = Math.max(dp(activity, 200), contentCap);
             }
@@ -3045,23 +2730,8 @@ public final class SlothShell {
         // Dimming it to a fifth said "this is a different surface underneath".
         chromeFade = 1f;
         applyChromeFade();
-        if (footRow != null) {
-            // the peek shows tabs and actions only; the footer waits for a real open
-            int roomForFooter = Math.round(Math.max(peekPx * 1.6f, expandedHeight(activity) * 0.55f));
-            int wantedFooter = h >= roomForFooter ? View.VISIBLE : View.GONE;
-            if (footRow.getVisibility() != wantedFooter) {
-                footRow.setVisibility(wantedFooter);
-            }
-        }
         if (drawer instanceof ViewGroup && ((ViewGroup) drawer).getChildCount() > 0) {
             ((ViewGroup) drawer).getChildAt(0).setAlpha(Math.min(1f, 0.35f + fraction));
-        }
-        if (board != null) {
-            boolean atPeek = h > 0 && h <= peekPx + dp(activity, 24);
-            if (atPeek != boardCompact) {
-                boardCompact = atPeek;
-                board.setCompact(atPeek);
-            }
         }
         if (appRoot != null && appRootPadTop >= 0) {
             // push, not overlay: the page starts where our bar ends, and moves down by
@@ -3210,189 +2880,18 @@ public final class SlothShell {
         }
     }
 /**
-     * Fill the peek from the browser's own tab strip: a close control, one square per open
-     * tab, and a way to open another.
-     *
-     * <p>Titles belong on the full sheet. At forty-odd dp of height a square carrying the
-     * page's initial and the tab's accent is readable, and the row scrolls sideways instead
-     * of shrinking titles to nothing.</p>
-     */
-    private static void fillPeek(Activity activity) {
-        if (peekRow == null) {
-            return;
-        }
-        // the tick asks every 800 ms; rebuilding identical tiles that often would throw
-        // away the row's scroll position and burn frames for nothing
-        String signature = peekSignature(activity);
-        if (signature.equals(lastPeekSignature) && peekRow.getChildCount() > 0) {
-            return;
-        }
-        lastPeekSignature = signature;
-        peekRow.removeAllViews();
-
-        View close = peekButton(activity, "peek-close", SlothIcons.Kind.CLOSE, "Close the drawer",
-                SlothTheme.ink(), CARD);
-        close.setOnClickListener(new View.OnClickListener() {
-            @Override
-            public void onClick(View v) {
-                animateTo(activity, 0);
-            }
-        });
-        peekRow.addView(close);
-
-        ViewGroup chips = resolveStrip(activity);
-        int active = -1;
-        if (chips != null) {
-            for (int i = 0; i < chips.getChildCount(); i++) {
-                if (chips.getChildAt(i).isSelected() || chips.getChildAt(i).isActivated()) {
-                    active = i;
-                    break;
-                }
-            }
-        }
-        if (chips != null) {
-            for (int i = 0; i < chips.getChildCount(); i++) {
-                final View chip = chips.getChildAt(i);
-                final CharSequence title = label(chip);
-                final boolean current = i == active;
-                final View tile = peekTile(activity, title, current);
-                tile.setOnClickListener(new View.OnClickListener() {
-                    @Override
-                    public void onClick(View v) {
-                        chip.performClick();
-                        animateTo(activity, 0);
-                    }
-                });
-                // a square is small enough that a second gesture belongs on it: holding one
-                // closes that tab, which is the thing you want after a flick through them
-                tile.setLongClickable(true);
-                tile.setOnLongClickListener(new View.OnLongClickListener() {
-                    @Override
-                    public boolean onLongClick(View v) {
-                        View close = byTagDeep(chip, "close");
-                        if (close == null) {
-                            SlothLog.warn("this browser offers no close on a tab");
-                            return false;
-                        }
-                        close.performClick();
-                        SlothLog.note("closed a tab from the peek");
-                        fillPeek(activity);
-                        return true;
-                    }
-                });
-                peekRow.addView(tile);
-            }
-        }
-
-        View plus = peekButton(activity, "peek-new", SlothIcons.Kind.PLUS, "New tab",
-                SlothTheme.dim(), SlothTheme.lineAt(0x12));
-        plus.setOnClickListener(new View.OnClickListener() {
-            @Override
-            public void onClick(View v) {
-                tap(activity, "btnPlus");
-                animateTo(activity, 0);
-            }
-        });
-        peekRow.addView(plus);
-        // the squares are added after this build, so the drag is attached last: the strip
-        // has to react to a finger that lands on a tab, not only on the gaps between them
-        attachStripDrag(peekRow);
-    }
-
-    /** Put the strip's drag on a view and everything under it. */
-    private static void attachStripDrag(View view) {
-        if (view == null || stripDrag == null) {
-            return;
-        }
-        view.setOnTouchListener(stripDrag);
-        if (view instanceof ViewGroup) {
-            ViewGroup group = (ViewGroup) view;
-            for (int i = 0; i < group.getChildCount(); i++) {
-                attachStripDrag(group.getChildAt(i));
-            }
-        }
-    }
-
-    /**
-     * Dim a chevron the browser has run out of history for.
-     *
-     * <p>The app keeps its own back and forward buttons and knows when they are dead; ours
-     * were always drawn at full ink, so the bar said "you can go forward" on a page you had
-     * just opened. The app is asked rather than guessed at.</p>
+     * Dim a direction the browser has run out of history for. The app keeps its own back and
+     * forward buttons and knows when they are dead, so it is asked rather than guessed at.
      */
     static void syncHistory(Activity activity) {
-        View backBtn = resolve(activity, "btnBack");
-        View fwdBtn = resolve(activity, "btnFwd");
-        if (backGlyph instanceof SlothIcons) {
-            ((SlothIcons) backGlyph).tint(backBtn != null && !backBtn.isEnabled()
-                    ? SlothTheme.muted() : INK);
+        if (board != null) {
+            board.syncHistory(resolve(activity, "btnBack"), resolve(activity, "btnFwd"));
         }
-        if (fwdGlyph instanceof SlothIcons) {
-            ((SlothIcons) fwdGlyph).tint(fwdBtn != null && !fwdBtn.isEnabled()
-                    ? SlothTheme.muted() : INK);
-        }
-    }
-
-    /** What the strip should be showing: the tabs' names, and which one is current. */
-    private static String peekSignature(Activity activity) {
-        StringBuilder out = new StringBuilder();
-        ViewGroup chips = resolveStrip(activity);
-        if (chips == null) {
-            return "";
-        }
-        for (int i = 0; i < chips.getChildCount(); i++) {
-            View chip = chips.getChildAt(i);
-            out.append(label(chip)).append(chip.isSelected() || chip.isActivated() ? "*" : "")
-                    .append('|');
-        }
-        return out.toString();
-    }
-
-    private static View peekButton(Activity activity, String tag, SlothIcons.Kind kind,
-                                   String label, int colour, int fill) {
-        LinearLayout box = new LinearLayout(activity);
-        box.setGravity(Gravity.CENTER);
-        box.setBackground(round(activity, 999, fill, SlothTheme.hairline(0x55)));
-        box.setTag(tag);
-        box.setContentDescription(label);
-        box.setClickable(true);
-        box.setFocusable(true);
-        box.addView(SlothIcons.of(activity, kind, 16, colour));
-        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(
-                dp(activity, 38), dp(activity, 38));
-        lp.rightMargin = dp(activity, 8);
-        box.setLayoutParams(lp);
-        return box;
-    }
-
-    private static View peekTile(Activity activity, CharSequence title, boolean current) {
-        LinearLayout tile = new LinearLayout(activity);
-        tile.setGravity(Gravity.CENTER);
-        tile.setBackground(round(activity, 12,
-                current ? SlothTheme.lineAt(0x2E) : CARD,
-                current ? SlothTheme.accent() : SlothTheme.hairline(0x33)));
-        TextView initial = new TextView(activity);
-        String text = title == null ? "" : title.toString().trim();
-        initial.setText(text.isEmpty() ? "?" : text.substring(0, 1).toUpperCase(Locale.UK));
-        initial.setTextSize(TypedValue.COMPLEX_UNIT_SP, 15f);
-        initial.setTextColor(current ? SlothTheme.ink() : SlothTheme.dim());
-        initial.setTypeface(initial.getTypeface(), android.graphics.Typeface.BOLD);
-        tile.addView(initial);
-        tile.setTag("peek-tab");
-        tile.setContentDescription((current ? title + ", current tab" : "Switch to " + title)
-                + ", long press to close");
-        tile.setClickable(true);
-        tile.setFocusable(true);
-        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(
-                dp(activity, 38), dp(activity, 38));
-        lp.rightMargin = dp(activity, 6);
-        tile.setLayoutParams(lp);
-        return tile;
     }
 
     /** The peek shows the strip instead of the board; it is one sheet, two faces. */
     private static void showPeek(Activity activity, boolean peek) {
-        if (peekScroll == null) {
+        if (strip == null) {
             return;
         }
         if (peek == peekShowing) {
@@ -3401,11 +2900,11 @@ public final class SlothShell {
             return;
         }
         if (peek) {
-            fillPeek(activity);
+            strip.fill(resolveStrip(activity));
         }
-        peekScroll.setVisibility(peek ? View.VISIBLE : View.GONE);
+        strip.view().setVisibility(peek ? View.VISIBLE : View.GONE);
         if (!peek) {
-            lastPeekSignature = "";
+            strip.forget();
         }
         if (scroller != null) {
             scroller.setVisibility(peek ? View.GONE : View.VISIBLE);
@@ -3419,42 +2918,21 @@ public final class SlothShell {
     }
 
     /**
-     * The first open size: the strip the peek shows, measured once from its own row.
-     *
-     * <p>It was a fixed 230 dp of dashboard; at that height a strip sitting on top of a band
-     * of empty paper read as a sheet that had failed to load.</p>
-     */
-    private static void refinePeek(Activity activity) {
-        if (board == null || peekFromContent) {
-            return;
-        }
-        int width = screenWidth(activity);
-        int fitted = board.measurePeek(width);
-        if (fitted <= 0) {
-            return;
-        }
-        int cap = Math.round(activity.getResources().getDisplayMetrics().heightPixels * 0.55f);
-        // the peek is a strip now, not a small dashboard: close, the tabs, a new tab, and
-        // the grip above them. Sized to that, because a sheet that shows a row and then a
-        // band of empty paper looks like it failed to load
-        int strip = dp(activity, 72);
-        peekPx = Math.min(cap, strip);
-        peekFromContent = true;
-    }
-
-    /**
      * The height of a fully open sheet: its content plus a little air, never past 85% of
      * the screen. Cached while the peek is showing, because a peeking board measures as a
      * strip and the seats would collapse to nothing.
      */
     private static int expandedHeight(Activity activity) {
         int cap = Math.round(activity.getResources().getDisplayMetrics().heightPixels * 0.85f);
-        // a peeking board has its sections hidden, so its measured height would say the sheet
-        // is strip-sized and the seats would collapse to nothing; the fitted height is cached
-        int content = board == null || peekShowing ? 0 : board.view().getMeasuredHeight();
-        if (content > 0 && content != measuredContentH) {
+        // measured now, at the width it will be shown at: a height remembered from an earlier
+        // layout - or from while the strip had the list hidden - is how the whole drawer opened
+        // cut off halfway through its own shortcuts
+        int content = measureBoard(activity);
+        if (content > 0) {
             measuredContentH = content;
-            expandedPx = Math.min(cap, content + dp(activity, 24));
+            // the list keeps a 30 dp band clear for the bottom handle, and the sheet keeps the
+            // navigation bar's height clear below that
+            expandedPx = Math.min(cap, content + dp(activity, 30) + navInset(activity) + dp(activity, 6));
         }
         if (expandedPx <= 0) {
             // a fallback that is still a sheet: the strip alone would be a sliver
@@ -3464,12 +2942,25 @@ public final class SlothShell {
         return Math.min(expandedPx, cap);
     }
 
-    private static void rememberOpenSize(Activity activity, boolean expanded) {
-        try {
-            activity.getSharedPreferences("slothworks", Context.MODE_PRIVATE)
-                    .edit().putBoolean("drawerExpanded", expanded).apply();
-        } catch (Throwable ignored) {
+    /** The board's height at the sheet's width, whatever is on show at the moment. */
+    private static int measureBoard(Activity activity) {
+        if (board == null) {
+            return 0;
         }
+        View view = board.view();
+        int width = view.getWidth();
+        if (width <= 0) {
+            // not laid out yet: the screen less the surface's side insets and the list's padding
+            width = screenWidth(activity) - dp(activity, 6) * 2 - dp(activity, 16) * 2;
+        }
+        try {
+            view.measure(View.MeasureSpec.makeMeasureSpec(Math.max(1, width), View.MeasureSpec.EXACTLY),
+                    View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED));
+        } catch (RuntimeException e) {
+            SlothLog.warn("could not measure the drawer: " + e.getClass().getSimpleName());
+            return 0;
+        }
+        return view.getMeasuredHeight();
     }
 
     /**
@@ -3482,15 +2973,9 @@ public final class SlothShell {
         return Math.max(dp(activity, 240), screen - statusBarHeight(activity) - navInset(activity));
     }
 
-    /** Open at the size it was left at, not always at the smallest one. */
-    private static int openHeight(Activity activity) {
-        try {
-            boolean expanded = activity.getSharedPreferences("slothworks", Context.MODE_PRIVATE)
-                    .getBoolean("drawerExpanded", false);
-            return expanded ? expandedHeight(activity) : peekPx;
-        } catch (Throwable ignored) {
-            return peekPx;
-        }
+    /** The top seat: the whole drawer, fitted to what it holds. */
+    private static int fullSeat(Activity activity) {
+        return Math.max(expandedHeight(activity), peekPx + dp(activity, 40));
     }
 
     /**
@@ -3504,10 +2989,10 @@ public final class SlothShell {
         }
         int h = drawer.getLayoutParams().height;
         int peek = peekPx;
-        int expanded = expandedHeight(activity);
-        int full = fullHeight(activity);
+        int full = fullSeat(activity);
 
-        int[] seats = new int[]{0, peek, Math.max(expanded, peek + dp(activity, 40)), full};
+        // three seats: shut, the strip of tabs, the whole drawer
+        int[] seats = new int[]{0, peek, full};
         int target = SlothSeats.choose(seats, h, velocity, peek, dp(activity, 8),
                 traceFrom >= full - dp(activity, 8));
 
@@ -3523,7 +3008,6 @@ public final class SlothShell {
         }
         traceTo = target;
         animateTo(activity, target);
-        rememberOpenSize(activity, target > 0);
     }
 
     private static void collapse(Activity activity, String bindingName) {
@@ -3791,6 +3275,11 @@ public final class SlothShell {
         }
     }
 
+    /** Status bar plus the floating bar, so a full-screen page can start below both. */
+    static int topChromePx(Activity activity) {
+        return statusBarHeight(activity) + dp(activity, 72);
+    }
+
     private static int statusBarHeight(Activity activity) {
         try {
             android.view.WindowInsets insets = activity.getWindow().getDecorView().getRootWindowInsets();
@@ -3874,9 +3363,6 @@ public final class SlothShell {
     private static final java.util.WeakHashMap<View, Float> chromeBase = new java.util.WeakHashMap<>();
 
     static void applyChromeFade() {
-        if (addressPillView != null) {
-            addressPillView.setAlpha(Math.max(0.30f, chromeFade));
-        }
         for (View view : chromeViews) {
             if (view == null) {
                 continue;
@@ -3885,17 +3371,6 @@ public final class SlothShell {
             float wanted = base == null ? 1f : base;
             view.setAlpha(Math.max(0.06f, wanted * chromeFade));
         }
-    }
-
-    private static void dimWhenUnusable(Activity activity, String bindingName, View glyph) {
-        if (glyph == null) {
-            return;
-        }
-        View real = resolve(activity, bindingName);
-        boolean usable = real == null || real.isEnabled();
-        float want = usable ? 1f : 0.42f;
-        chromeBase.put(glyph, want);
-        glyph.setAlpha(Math.max(0.06f, want * chromeFade));
     }
 
     /* ---------------------------------------------------------------- refresh */
@@ -3916,11 +3391,10 @@ public final class SlothShell {
         }
         try {
             View real = resolve(activity, "urlBar");
-            if (real instanceof EditText && address != null && !address.hasFocus()) {
+            if (real instanceof EditText && topBar != null) {
                 CharSequence text = ((EditText) real).getText();
-                if (text != null && !text.toString().contentEquals(address.getText())) {
-                    address.setText(text.toString());
-                    address.setSelection(address.getText().length());
+                if (text != null) {
+                    topBar.showAddress(text.toString());
                 }
             }
             // the app can leave the page at zero height on its own - a restart, a cleared
@@ -3930,21 +3404,23 @@ public final class SlothShell {
             // asked once the window is laid out: this is the only evidence the request worked
             checkEdgeWindow(activity);
             syncHistory(activity);
+            // the session changes with the tab, and the app may set its own delegate later
+            SlothProgress.watch(activity, PROGRESS);
             if (board != null && address != null) {
                 // the drawer's address line is the same fact as the bar's, so it is kept
                 // the same way: on the timer, not only when the drawer is rebuilt
-                board.onSite(String.valueOf(address.getText()));
+                board.onSite(topBar == null ? String.valueOf(address.getText()) : topBar.pageAddress());
             }
             int count = tabCount(activity);
-            if (TabFace != null && !String.valueOf(count).contentEquals(TabFace.getText())) {
-                TabFace.setText(String.valueOf(count));
+            if (topBar != null) {
+                topBar.setTabCount(count);
             }
             if (board != null) {
                 board.onTabCount(count);
-                if (peekShowing) {
-                    // the strip is the tabs: it cannot be a frame behind them
-                    fillPeek(activity);
-                }
+            }
+            if (peekShowing && strip != null) {
+                // the strip is the tabs: it cannot be a frame behind them
+                strip.fill(resolveStrip(activity));
             }
             sweepTicks++;
             if (sweepTicks % 4 == 0) {
@@ -3962,26 +3438,24 @@ public final class SlothShell {
         try {
             ensurePageVisible(activity);
             View real = resolve(activity, "urlBar");
-            if (real instanceof EditText && address != null && !address.hasFocus()) {
+            if (real instanceof EditText && topBar != null) {
                 CharSequence text = ((EditText) real).getText();
-                if (text != null && !text.toString().contentEquals(address.getText())) {
-                    address.setText(text.toString());
-                    address.setSelection(address.getText().length());
+                if (text != null) {
+                    topBar.showAddress(text.toString());
                 }
             }
 
             if (board != null) {
                 board.mirror(activity);
             }
-            if (TabFace != null) {
-                TabFace.setText(String.valueOf(tabCount(activity)));
+            if (topBar != null) {
+                topBar.setTabCount(tabCount(activity));
             }
             if (board != null) {
                 board.onSite(thisSite(activity));
-            board.onTabCount(tabCount(activity));
-            tintStatusBar(activity);
-            refinePeek(activity);
+                board.onTabCount(tabCount(activity));
             }
+            tintStatusBar(activity);
             if (settingsOpen) {
                 // the app closes its own panel on back; if it did, stop lending it
                 View panelNow = resolve(activity, "panel");
@@ -4017,8 +3491,7 @@ public final class SlothShell {
                     }
                 }
             }
-            dimWhenUnusable(activity, "btnBack", backGlyph);
-            dimWhenUnusable(activity, "btnFwd", fwdGlyph);
+            syncHistory(activity);
         } catch (Throwable t) {
             // this method touches the app's own view tree, which changes under us. Swallowed
             // silently it hid every failure it ever had; a line in the log costs nothing
@@ -4045,36 +3518,6 @@ public final class SlothShell {
             }
         }
         return v.getContentDescription();
-    }
-
-    /* ----------------------------------------------------------------- widgets */
-    private static TextView label(Activity activity, String text) {
-        TextView t = new TextView(activity);
-        t.setText(text);
-        t.setTextSize(TypedValue.COMPLEX_UNIT_SP, 11f);
-        t.setLetterSpacing(0.1f);
-        t.setTextColor(DIM);
-        t.setPadding(0, dp(activity, 10), 0, dp(activity, 6));
-        return t;
-    }
-
-    private static TextView chip(Activity activity, String text, View.OnClickListener onClick) {
-        TextView t = new TextView(activity);
-        t.setText(text);
-        t.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f);
-        t.setTextColor(INK);
-        t.setGravity(Gravity.CENTER);
-        t.setContentDescription(text);
-        t.setFocusable(true);
-        t.setPadding(dp(activity, 12), 0, dp(activity, 12), 0);
-        // the footer pills read as disabled: a border a shade off the panel is not an edge
-        t.setBackground(round(activity, 99, CARD, SlothTheme.hairline(0x40)));
-        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.WRAP_CONTENT, dp(activity, 34));
-        lp.setMargins(0, 0, dp(activity, 6), 0);
-        t.setLayoutParams(lp);
-        t.setOnClickListener(onClick);
-        return t;
     }
 
 }

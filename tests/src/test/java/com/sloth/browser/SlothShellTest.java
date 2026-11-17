@@ -6,6 +6,8 @@ import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertNotEquals;
 import static org.junit.Assert.assertTrue;
+import static org.junit.Assert.assertNotSame;
+import static org.junit.Assert.assertSame;
 
 import android.app.Activity;
 import android.content.Context;
@@ -76,8 +78,13 @@ public class SlothShellTest {
         public final com.sloth.browser.engine.SlothSettings settings =
                 new com.sloth.browser.engine.SlothSettings();
         public int settingsSaved;
+        /** When set, saveSettings fails the way a full disk or a refused write does. */
+        public boolean refuseSave;
 
         private void saveSettings() {
+            if (refuseSave) {
+                throw new IllegalStateException("refused");
+            }
             settingsSaved++;
         }
 
@@ -787,39 +794,24 @@ public class SlothShellTest {
 
     /** Nothing in the widget grid may measure itself zero tall. */
     @Test
-    public void theWidgetRowsHaveAHeightOfTheirOwn() throws Exception {
+    public void everyShownWidgetHasAHeightOfItsOwn() throws Exception {
         TestActivity activity = build();
         SlothShell.own(activity);
         settle();
-        View grid = findByViewTag(drawerOf(activity), "widget-grid");
+        SlothBoard board = SlothShell.boardForTest();
+        board.setWidgetsOpen(true);
+        View root = board.view();
+        root.measure(View.MeasureSpec.makeMeasureSpec(px(380), View.MeasureSpec.EXACTLY),
+                View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED));
+        root.layout(0, 0, px(380), root.getMeasuredHeight());
+        View grid = findByViewTag(root, "widget-grid");
         assertNotNull("a widget grid", grid);
-        ViewGroup rows = (ViewGroup) grid;
-        int checked = 0;
-        for (int i = 0; i < rows.getChildCount(); i++) {
-            View child = rows.getChildAt(i);
-            android.view.ViewGroup.LayoutParams lp = child.getLayoutParams();
-            if (lp == null) {
-                continue;
-            }
-            if (lp instanceof LinearLayout.LayoutParams && ((LinearLayout.LayoutParams) lp).weight > 0) {
-                org.junit.Assert.fail("a row weighted inside a wrap-content column: child " + i);
-            }
-            assertFalse("child " + i + " asks for height 0", lp.height == 0);
-            if (child instanceof ViewGroup) {
-                ViewGroup inner = (ViewGroup) child;
-                for (int j = 0; j < inner.getChildCount(); j++) {
-                    android.view.ViewGroup.LayoutParams ilp = inner.getChildAt(j).getLayoutParams();
-                    if (ilp instanceof LinearLayout.LayoutParams
-                            && ((LinearLayout.LayoutParams) ilp).weight > 0) {
-                        assertEquals("a weighted tile must measure its own height inside a "
-                                + "wrap-content row: child " + i + "/" + j,
-                                ViewGroup.LayoutParams.WRAP_CONTENT, ilp.height);
-                        checked++;
-                    }
-                }
-            }
+        for (String name : new String[]{"Clock", "Calculator. Tap to show the keys", "Notes"}) {
+            View tile = findTagged(grid, name);
+            assertNotNull(name, tile);
+            assertTrue(name + " measures a real height, not a zero-high box: " + tile.getHeight(),
+                    tile.getHeight() > px(40));
         }
-        assertTrue("the grid has weighted tiles to check", checked > 0);
     }
 
     /** Switching the calculator off takes its keypad with it, and leaving it off leaves it off. */
@@ -1559,7 +1551,12 @@ public class SlothShellTest {
 
         EditText shown = findAddress(overlayOf(activity));
         assertNotNull("the bar owns an address field", shown);
-        assertEquals("https://example.org/page", shown.getText().toString());
+        assertEquals("at rest it shows the site, the way phone browsers do", "example.org",
+                shown.getText().toString());
+
+        shown.requestFocus();
+        assertEquals("tap in and the whole address is there to edit", "https://example.org/page",
+                shown.getText().toString());
     }
 
     @Test
@@ -1578,21 +1575,34 @@ public class SlothShellTest {
     }
 
     @Test
-    public void capsuleButtonsReachTheOriginalWidgets() {
+    public void theBarAndTheShortcutsReachTheOriginalWidgets() {
         TestActivity activity = build();
         Counter back = new Counter();
-        Counter plus = new Counter();
+        Counter reload = new Counter();
         activity.binding.btnBack.setOnClickListener(back);
-        activity.binding.btnPlus.setOnClickListener(plus);
+        activity.binding.btnReload.setOnClickListener(reload);
 
         SlothShell.own(activity);
 
-        View bar = findByViewTag(overlayOf(activity), "bar");
-        ViewGroup row = (ViewGroup) bar;
-        row.getChildAt(0).performClick();  // back glyph
-        row.getChildAt(row.getChildCount() - 1).performClick();  // menu glyph
+        findByViewTag(overlayOf(activity), "bar-reload").performClick();
+        assertEquals("reload in the field forwards to the browser's own button", 1, reload.clicks);
+        findTagged(drawerOf(activity), "Back").performClick();
+        assertEquals("back, in the drawer, forwards to the browser's own button", 1, back.clicks);
+    }
 
-        assertEquals("back forwards to the browser's own button", 1, back.clicks);
+    @Test
+    public void theBarIsASearchFieldFirst() {
+        TestActivity activity = build();
+        SlothShell.own(activity);
+        settle();
+        ViewGroup bar = (ViewGroup) findByViewTag(overlayOf(activity), "bar");
+        assertEquals("three things: the field, the tab count, the menu", 3, bar.getChildCount());
+        assertEquals("address-pill", bar.getChildAt(0).getTag());
+        assertEquals("tab-count", bar.getChildAt(1).getTag());
+        assertEquals("bar-menu", bar.getChildAt(2).getTag());
+        assertNull("back is not in the bar any more", findTagged(bar, "Back"));
+        assertNull("nor forward", findTagged(bar, "Forward"));
+        assertNotNull("reload is inside the field", findByViewTag(bar.getChildAt(0), "bar-reload"));
     }
 
     @Test
@@ -1691,7 +1701,8 @@ public class SlothShellTest {
         assertNull("and no wordmark of its own", findChip(drawer, "Sloth"));
         assertNotNull("the tabs are the first thing in it", findChip(drawer, "Tabs"));
         assertNotNull("with their add control", findTagged(drawer, "New tab"));
-        assertNotNull("widget section", findChip(drawer, "WIDGETS"));
+        assertNotNull("the places it can take you", findChip(drawer, "Go to"));
+        assertNotNull("widget section", findChip(drawer, "Widgets"));
         assertNotNull("clock widget", findChip(drawer, "CLOCK"));
         assertNotNull("notes widget", findChip(drawer, "NOTES"));
         assertNotNull("calculator widget", findChip(drawer, "CALC"));
@@ -1723,12 +1734,12 @@ public class SlothShellTest {
         SlothShell.own(activity);
         View drawer = drawerOf(activity);
 
-        View edit = findChip(drawer, "Edit widgets");
+        View edit = findChip(drawer, "Edit");
         assertNotNull(edit);
-        tapChip(drawer, "Edit widgets");
+        tapChip(drawer, "Edit");
         settle();
 
-        // one door: editing opens the same chooser as Add widget
+        // one door: Edit is the only way into the chooser
         View chooser = findByViewTag(drawerOf(activity), "widgets");
         assertNotNull("editing opens the widget chooser", chooser);
         assertEquals(View.VISIBLE, chooser.getVisibility());
@@ -1775,10 +1786,13 @@ public class SlothShellTest {
         activity.binding.btnFwd.setEnabled(true);
         SlothShell.own(activity);
 
-        View bar = findByViewTag(overlayOf(activity), "bar");
-        ViewGroup row = (ViewGroup) bar;
-        assertEquals("back dimmed", 0.42f, row.getChildAt(0).getAlpha(), 0.01f);
-        assertEquals("forward full", 1f, row.getChildAt(1).getAlpha(), 0.01f);
+        View drawer = drawerOf(activity);
+        View back = findTagged(drawer, "Back, no earlier page");
+        assertNotNull("back says there is nowhere to go", back);
+        assertEquals("and is dimmed", 0.38f, back.getAlpha(), 0.01f);
+        View forward = findTagged(drawer, "Forward");
+        assertNotNull(forward);
+        assertEquals("forward is at full weight", 1f, forward.getAlpha(), 0.01f);
     }
 
     private interface ViewVisitor {
@@ -1928,20 +1942,127 @@ public class SlothShellTest {
         EditText shown = findAddress(overlayOf(activity));
         assertNotNull(shown);
 
-        shown.setText("http://not-secure.example");
-        org.robolectric.shadows.ShadowLooper.idleMainLooper();
+        activity.binding.urlBar.setText("http://not-secure.example");
+        SlothShell.tick();
         assertEquals("warns in colour", 0xFFE2A05A, ((SlothIcons) findLock(overlayOf(activity))).colour());
         assertTrue("and says so in words",
                 String.valueOf(findLock(overlayOf(activity)).getContentDescription())
                         .contains("not a secure address"));
 
-        shown.setText("https://sloth.example");
-        org.robolectric.shadows.ShadowLooper.idleMainLooper();
+        activity.binding.urlBar.setText("https://sloth.example");
+        SlothShell.tick();
         assertEquals("ink when secure", SlothTheme.dim(),
                 ((SlothIcons) findLock(overlayOf(activity))).colour());
         assertTrue("and it is the way into site settings",
                 String.valueOf(findLock(overlayOf(activity)).getContentDescription())
                         .startsWith("Site settings"));
+    }
+
+    /** The omnibox shows the host alone. That is not an http address. */
+    @Test
+    public void theOmniboxHostIsNotCalledInsecure() {
+        TestActivity activity = build();
+        SlothShell.own(activity);
+        settle();
+        // the browser's own field drops the scheme once a page is showing
+        activity.binding.urlBar.setText("example.com");
+        settle();
+
+        SlothIcons lock = (SlothIcons) findByViewTag(overlayOf(activity), "site-icon");
+        assertEquals("a host with the scheme stripped is the page, not http",
+                SlothTheme.dim(), lock.colour());
+        assertTrue(String.valueOf(lock.getContentDescription()).contains("secure connection"));
+
+        EditText shown = findAddress(overlayOf(activity));
+        shown.requestFocus();
+        shown.setText("example.com");
+        org.robolectric.shadows.ShadowLooper.idleMainLooper();
+        assertEquals("while it is being typed, a bare host is not vouched for",
+                0xFFE2A05A, lock.colour());
+
+        assertTrue(SlothTopBar.secure("example.com", false));
+        assertFalse(SlothTopBar.secure("http://example.com", false));
+        assertFalse(SlothTopBar.secure("example.com", true));
+    }
+
+    /** A refused save must not paint a number the browser did not keep. */
+    @Test
+    public void aRefusedTextZoomStaysOnTheOldNumber() {
+        TestActivity activity = build();
+        activity.refuseSave = true;
+        SlothShell.own(activity);
+        SlothShell.openSettingsPage(activity);
+        settle();
+        View page = findByViewTag(overlayOf(activity), "settings-page");
+
+        tapChip(page, "Text zoom");
+        settle();
+
+        assertEquals("the model keeps 100", 100L, activity.settings.textZoom);
+        assertNotNull("the row still says 100%", findChip(page, "100%"));
+        assertNull("125% was not saved, so it is not shown", findChip(page, "125%"));
+        assertTrue(SlothLog.text().contains("could not save textZoom"));
+    }
+
+    /** Back, the row pointer and the address clear are drawn, not typed. */
+    @Test
+    public void settingsBackAndTheAddressClearAreDrawn() {
+        TestActivity activity = build();
+        SlothShell.own(activity);
+        SlothShell.openSettingsPage(activity);
+        settle();
+        View page = findByViewTag(overlayOf(activity), "settings-page");
+
+        View back = findTagged(page, "Back to the drawer");
+        assertTrue("settings back is a drawn chevron", back instanceof SlothIcons);
+        assertEquals(SlothIcons.Kind.BACK, ((SlothIcons) back).kind());
+        assertEquals("Saved with the browser.",
+                ((android.widget.TextView) findByViewTag(page, "settings-intro")).getText().toString());
+
+        View label = findChip(page, "Palette");
+        View row = label;
+        while (row != null && !"settings-row".equals(String.valueOf(row.getTag()))) {
+            row = row.getParent() instanceof View ? (View) row.getParent() : null;
+        }
+        final boolean[] forward = new boolean[1];
+        walk(row, new ViewVisitor() {
+            @Override
+            public void visit(View v) {
+                if (v instanceof SlothIcons
+                        && ((SlothIcons) v).kind() == SlothIcons.Kind.FORWARD) {
+                    forward[0] = true;
+                }
+                if (v instanceof android.widget.TextView
+                        && "\u203a".contentEquals(((android.widget.TextView) v).getText())) {
+                    forward[0] = false;
+                }
+            }
+        });
+        assertTrue("a row points with a drawn chevron", forward[0]);
+
+        EditText address = findAddress(overlayOf(activity));
+        address.requestFocus();
+        address.setText("https://example.com");
+        org.robolectric.shadows.ShadowLooper.idleMainLooper();
+        View clear = findByViewTag(overlayOf(activity), "bar-clear");
+        assertEquals(View.VISIBLE, clear.getVisibility());
+        View cross = ((android.view.ViewGroup) clear).getChildAt(0);
+        assertTrue("clear is a drawn cross", cross instanceof SlothIcons);
+        assertEquals(SlothIcons.Kind.CLOSE, ((SlothIcons) cross).kind());
+    }
+
+    /** The title and Back have to clear the status bar and the shell bar. */
+    @Test
+    public void settingsHeaderClearsTheBar() {
+        TestActivity activity = build();
+        SlothShell.own(activity);
+        SlothShell.openSettingsPage(activity);
+        settle();
+        View page = findByViewTag(overlayOf(activity), "settings-page");
+        android.widget.ScrollView scroller = (android.widget.ScrollView) ((android.view.ViewGroup) page).getChildAt(0);
+        View column = scroller.getChildAt(0);
+        assertTrue("the header starts below the bar, not under it: " + column.getPaddingTop(),
+                column.getPaddingTop() >= SlothShell.topChromePx(activity));
     }
 
     private View findLock(View root) {
@@ -1979,8 +2100,9 @@ public class SlothShellTest {
         Counter info = new Counter();
         activity.binding.pageInfo.setOnClickListener(info);
         SlothShell.own(activity);
-        findAddress(overlayOf(activity)).setText("https://sloth.example/leaf");
-        org.robolectric.shadows.ShadowLooper.idleMainLooper();
+        // a page arrives the way it does on the phone: in the app's own bar, read on the tick
+        activity.binding.urlBar.setText("https://sloth.example/leaf");
+        SlothShell.tick();
 
         View lock = findLock(overlayOf(activity));
         assertNotNull(lock);
@@ -2004,7 +2126,7 @@ public class SlothShellTest {
         SlothShell.own(activity);
 
         View drawer = drawerOf(activity);
-        View closeButton = findChip(drawer, "×");
+        View closeButton = findByViewTag(drawer, "tab-close");
         assertNotNull("a tab card offers a close button", closeButton);
         closeButton.performClick();
         assertEquals("and it closes the browser's tab", 1, closed.clicks);
@@ -2310,32 +2432,43 @@ public class SlothShellTest {
         TestActivity activity = build();
         SlothShell.own(activity);
         android.widget.EditText field = findAddress(overlayOf(activity));
-        field.setText("sloth.example/page");
+        activity.binding.urlBar.setText("https://sloth.example/page");
+        SlothShell.tick();
+        assertEquals("at rest the field shows the site", "sloth.example", field.getText().toString());
 
         assertTrue("long press is handled", field.performLongClick());
 
         android.content.ClipboardManager clipboard =
                 (android.content.ClipboardManager) activity.getSystemService(Context.CLIPBOARD_SERVICE);
-        assertEquals("the address is on the clipboard",
-                "sloth.example/page", clipboard.getPrimaryClip().getItemAt(0).getText().toString());
+        assertEquals("the whole address is on the clipboard, not the short form",
+                "https://sloth.example/page", clipboard.getPrimaryClip().getItemAt(0).getText().toString());
     }
 
     @Test
-    public void theDrawerOpensAtTheSizeItWasLeftAt() {
+    public void theTabCountOpensTheStripAndTheMenuOpensTheWholeDrawer() throws Exception {
         TestActivity activity = build();
-        activity.getSharedPreferences("slothworks", Context.MODE_PRIVATE)
-                .edit().putBoolean("drawerExpanded", true).apply();
         SlothShell.own(activity);
 
-        View tabsChip = findTagged(overlayOf(activity), "Tabs");
-        assertNotNull(tabsChip);
-        tabsChip.performClick();
+        findByViewTag(overlayOf(activity), "tab-count").performClick();
         settle();
+        assertEquals("the count shows the strip of tabs", peekHeight(activity),
+                drawerOf(activity).getLayoutParams().height);
+        assertEquals(View.VISIBLE, findByViewTag(drawerOf(activity), "peek-strip").getVisibility());
 
-        int peek = px(230);
-        assertTrue("it opened taller than the peek, remembering the last size: "
-                        + drawerOf(activity).getLayoutParams().height + " vs " + peek,
-                drawerOf(activity).getLayoutParams().height > peek + px(24));
+        findByViewTag(overlayOf(activity), "tab-count").performClick();
+        settle();
+        assertEquals("tapped again, it puts the strip away", 0,
+                drawerOf(activity).getLayoutParams().height);
+
+        findByViewTag(overlayOf(activity), "bar-menu").performClick();
+        settle();
+        assertTrue("the menu opens the whole drawer, past the strip",
+                drawerOf(activity).getLayoutParams().height > peekHeight(activity) + px(40));
+        assertEquals(View.GONE, findByViewTag(drawerOf(activity), "peek-strip").getVisibility());
+
+        findByViewTag(overlayOf(activity), "bar-menu").performClick();
+        settle();
+        assertEquals("and tapped again, it shuts", 0, drawerOf(activity).getLayoutParams().height);
     }
 
     @Test
@@ -2343,7 +2476,7 @@ public class SlothShellTest {
         TestActivity activity = build();
         SlothShell.own(activity);
 
-        View chip = findTagged(overlayOf(activity), "Tabs");
+        View chip = findByViewTag(overlayOf(activity), "tab-count");
         assertNotNull(chip);
         chip.performLongClick();
 
@@ -2471,7 +2604,7 @@ public class SlothShellTest {
                 android.provider.Settings.Global.ANIMATOR_DURATION_SCALE, 0f);
         SlothShell.own(activity);
 
-        View tabsChip = findTagged(overlayOf(activity), "Tabs");
+        View tabsChip = findByViewTag(overlayOf(activity), "tab-count");
         tabsChip.performClick();
 
         assertEquals(1f, drawerOf(activity).getAlpha(), 0.001f);
@@ -2589,8 +2722,8 @@ public class SlothShellTest {
         assertNotNull(scroller);
         scroller.scrollTo(0, 400);
 
-        View tabsChip = findTagged(overlayOf(activity), "Tabs");
-        tabsChip.performClick();
+        // the menu opens the whole drawer, which is the face with a list to scroll
+        findByViewTag(overlayOf(activity), "bar-menu").performClick();
         settle();
 
         assertEquals("opening starts at the top of the drawer", 0, scroller.getScrollY());
@@ -2602,7 +2735,7 @@ public class SlothShellTest {
         TestActivity activity = build();
         SlothShell.own(activity);
 
-        View tabsChip = findTagged(overlayOf(activity), "Tabs");
+        View tabsChip = findByViewTag(overlayOf(activity), "tab-count");
         assertNotNull(tabsChip);
         assertTrue("the control is long-pressable", ((View) tabsChip).isLongClickable());
         // the app's switcher is not on this classpath; the press must not throw
@@ -2848,7 +2981,7 @@ public class SlothShellTest {
         SlothShell.own(activity);
         View drawer = drawerOf(activity);
 
-        tapChip(drawer, "Edit widgets");
+        tapChip(drawer, "Edit");
         settle();
         tapChip(findByViewTag(drawerOf(activity), "widgets"), "Calculator");
         settle();
@@ -2865,7 +2998,7 @@ public class SlothShellTest {
         assertTrue("the choice is remembered", afterRelaunch == null || !isShown(afterRelaunch));
 
         // and the chooser offers a way back
-        tapChip(drawerOf(again), "Edit widgets");
+        tapChip(drawerOf(again), "Edit");
         settle();
         assertNotNull(findTagged(findByViewTag(drawerOf(again), "widgets"), "Calculator"));
     }
@@ -2926,8 +3059,9 @@ public class SlothShellTest {
     public void thePadlockIsTheSiteControl() {
         TestActivity activity = build();
         SlothShell.own(activity);
-        findAddress(overlayOf(activity)).setText("https://sloth.example/leaf");
-        org.robolectric.shadows.ShadowLooper.idleMainLooper();
+        // a page arrives the way it does on the phone: in the app's own bar, read on the tick
+        activity.binding.urlBar.setText("https://sloth.example/leaf");
+        SlothShell.tick();
         View lock = findLock(overlayOf(activity));
         assertNotNull("the padlock sits in the address field", lock);
         assertTrue("and it opens site settings", lock.isClickable());
@@ -2938,7 +3072,7 @@ public class SlothShellTest {
         TestActivity activity = build();
         SlothShell.own(activity);
         View bar = findByViewTag(overlayOf(activity), "drag");
-        View plus = findTagged(bar, "New tab");
+        View plus = findByViewTag(bar, "bar-menu");
 
         float collapsed = plus == null ? 1f : plus.getAlpha();
 
@@ -2952,7 +3086,7 @@ public class SlothShellTest {
                 drawerOf(activity).getLayoutParams().height > px(150));
         // the bar is the dashboard's header now: it does not step back, because stepping
         // back said "something else is in front of me"
-        float kept = findTagged(bar, "New tab").getAlpha();
+        float kept = findByViewTag(bar, "bar-menu").getAlpha();
         assertEquals("the bar stays at full weight while the dashboard is up",
                 collapsed, kept, 0.01f);
     }
@@ -2975,7 +3109,7 @@ public class SlothShellTest {
         settle();
 
         assertEquals("closed", 0, drawerOf(activity).getLayoutParams().height);
-        assertEquals("the bar is fully back", 1f, findTagged(bar, "New tab").getAlpha(), 0.02f);
+        assertEquals("the bar is fully back", 1f, findByViewTag(bar, "bar-menu").getAlpha(), 0.02f);
     }
 
     @Test
@@ -3049,6 +3183,7 @@ public class SlothShellTest {
         int open = drawer.getLayoutParams().height;
 
         assertNull("there is no second header to drag", findByViewTag(drawer, "head-drag"));
+        assertNotNull("the drawer still has its head line", findByViewTag(drawer, "site-row"));
 
         // the content above its own top is still a drag of the sheet: the list hands an
         // upward pull to the drawer, which is how a finger on the dashboard closes it
@@ -3071,7 +3206,7 @@ public class SlothShellTest {
         SlothShell.own(activity);
         assertEquals("starts on Moss", 0xFFC9F27E, SlothShell.ACCENT);
 
-        findByViewTag(drawerOf(activity), "palette-chip").performClick();
+        openPalette(activity);
         settle();
         View picker = findByViewTag(drawerOf(activity), "palette");
         assertNotNull("the chip opens the palette list", picker);
@@ -3088,7 +3223,7 @@ public class SlothShellTest {
     public void theChosenThemeSurvivesARelaunch() {
         TestActivity activity = build();
         SlothShell.own(activity);
-        findByViewTag(drawerOf(activity), "palette-chip").performClick();
+        openPalette(activity);
         settle();
         tapChip(findByViewTag(drawerOf(activity), "palette"), "Moonlit Forest");
         settle();
@@ -3096,7 +3231,8 @@ public class SlothShellTest {
         TestActivity again = build();
         SlothShell.own(again);
         assertEquals("the palette is remembered", 0xFF4FE0D2, SlothShell.ACCENT);
-        assertNotNull("and the chip says which one", findChip(drawerOf(again), "Moonlit"));
+        assertTrue("and the theme says which one: " + SlothTheme.name(),
+                SlothTheme.name().startsWith("Moonlit"));
         int rows = countByTag(drawerOf(again), "palette-row");
         assertEquals("every palette is offered", SlothTheme.NAMES.length, rows);
     }
@@ -3169,7 +3305,7 @@ public class SlothShellTest {
     }
 
     @Test
-    public void tabCardsLookLikeThumbnailsNotRows() {
+    public void tabCardsCarryTheInitialTheTitleAndAClose() {
         TestActivity activity = build();
         android.widget.TextView chip = new android.widget.TextView(activity);
         chip.setText("Docs");
@@ -3178,12 +3314,16 @@ public class SlothShellTest {
         SlothShell.own(activity);
         View drawer = drawerOf(activity);
 
-        View label = findChip(drawer, "Docs");
-        assertNotNull(label);
-        View card = (View) label.getParent().getParent(); // title row, then the card
+        View card = findByViewTag(drawer, "tab-card");
+        assertNotNull(card);
         assertEquals("a card carries the page's initial", "D", firstInitial(card));
+        assertEquals("and its title", "Docs", tabLabel(card));
         assertNotNull("and its own close control", findTagged(drawer, "Close Docs"));
-        assertTrue("and is a tall card, not a thin row", card.getLayoutParams().height >= 100);
+        assertTrue("and is a card a thumb can hit, not a thin row",
+                card.getMinimumHeight() >= px(64));
+        ViewGroup grid = (ViewGroup) findByViewTag(drawer, "tab-row");
+        assertTrue("two cards across, so a title has room", grid instanceof SlothGrid);
+        assertEquals(2, ((SlothGrid) grid).columns());
     }
 
     private String firstInitial(View card) {
@@ -3275,6 +3415,34 @@ public class SlothShellTest {
         assertTrue("the sloth himself is missing from the scene: " + found + " pixels", found > 500);
     }
 
+    /** A panel that is only the bar has no room for him: no head over the field, no branch under it. */
+    @Test
+    @org.robolectric.annotation.GraphicsMode(org.robolectric.annotation.GraphicsMode.Mode.NATIVE)
+    public void aBarHeightSceneHasNoSlothSqueezedIntoIt() {
+        TestActivity activity = build();
+        SlothShell.own(activity);
+        View backdrop = findByViewTag(overlayOf(activity), "backdrop");
+        backdrop.measure(View.MeasureSpec.makeMeasureSpec(900, View.MeasureSpec.EXACTLY),
+                View.MeasureSpec.makeMeasureSpec(260, View.MeasureSpec.EXACTLY));
+        backdrop.layout(0, 0, 900, 260);
+        android.graphics.Bitmap bitmap = android.graphics.Bitmap.createBitmap(900, 260,
+                android.graphics.Bitmap.Config.ARGB_8888);
+        backdrop.draw(new android.graphics.Canvas(bitmap));
+        int body = com.sloth.browser.SlothBackdrop.bodyColour();
+        int found = 0;
+        for (int x = 0; x < 900; x++) {
+            for (int y = 0; y < 260; y++) {
+                if (bitmap.getPixel(x, y) == body) {
+                    found++;
+                }
+            }
+        }
+        assertEquals("no sloth pixels in a bar-height scene", 0, found);
+        assertEquals(0f, com.sloth.browser.SlothBackdrop.slothPresence(900, 260), 0.001f);
+        assertEquals("and he is fully there once there is room", 1f,
+                com.sloth.browser.SlothBackdrop.slothPresence(900, 700), 0.001f);
+    }
+
     /* -------------------------------------------------------------------
      * Renders every state of the shell to a PNG so the layout can be looked at
      * rather than argued about. A three-button navigation bar is drawn over the
@@ -3295,9 +3463,20 @@ public class SlothShellTest {
         SlothShell.testNavInset = 144; // a three-button navigation bar
         TestActivity activity = build();
         addTabs(activity, "Docs", "Mail", "News");
+        org.mozilla.geckoview.GeckoSession session = pageWithSession(activity);
         SlothShell.own(activity);
         settle();
         shoot(activity, new java.io.File(dir, "01-collapsed.png"));
+        SlothShell.tick();
+        session.getProgressDelegate().onPageStart(session, "https://example.org");
+        session.getProgressDelegate().onProgressChange(session, 60);
+        settle();
+        shoot(activity, new java.io.File(dir, "01b-loading.png"));
+        session.getProgressDelegate().onPageStop(session, true);
+        activity.binding.urlBar.setText("https://www.example.org/articles/sloths?ref=home");
+        SlothShell.tick();
+        settle();
+        shoot(activity, new java.io.File(dir, "01c-address.png"));
 
         View handle = findByViewTag(overlayOf(activity), "drag");
         long t0 = android.os.SystemClock.uptimeMillis();
@@ -3309,13 +3488,19 @@ public class SlothShellTest {
         settle();
         shoot(activity, new java.io.File(dir, "02b-peek-strip.png"));
 
-        driveHeight(activity, 1200);
+        // the real seats, not forced heights: the menu opens the whole drawer
+        driveHeight(activity, 0);
+        settle();
+        findByViewTag(overlayOf(activity), "bar-menu").performClick();
         settle();
         shoot(activity, new java.io.File(dir, "03-open.png"));
 
-        driveHeight(activity, 2400);
+        // and with the widgets unfolded, the same seat fitted to more
+        SlothShell.boardForTest().setWidgetsOpen(true);
+        driveHeight(activity, fullSeat(activity));
         settle();
         shoot(activity, new java.io.File(dir, "04-full.png"));
+        SlothShell.boardForTest().setWidgetsOpen(false);
 
         SlothShell.openDiagPage(activity);
         settle();
@@ -3328,8 +3513,8 @@ public class SlothShellTest {
         SlothShell.backOneLayer(activity);
         settle();
 
-        if (findByViewTag(drawerOf(activity), "palette-chip") != null) {
-            findByViewTag(drawerOf(activity), "palette-chip").performClick();
+        {
+            openPalette(activity);
             settle();
             shoot(activity, new java.io.File(dir, "06-palette.png"));
             findByViewTag(drawerOf(activity), "palette").setVisibility(View.GONE);
@@ -3485,7 +3670,7 @@ public class SlothShellTest {
                 Activity.class, int.class);
         m.setAccessible(true);
         if (height < 0) {
-            java.lang.reflect.Method full = SlothShell.class.getDeclaredMethod("openHeight",
+            java.lang.reflect.Method full = SlothShell.class.getDeclaredMethod("fullSeat",
                     Activity.class);
             full.setAccessible(true);
             height = (Integer) full.invoke(null, activity);
@@ -3606,9 +3791,10 @@ public class SlothShellTest {
         TestActivity activity = build();
         SlothShell.own(activity);
         settle();
-        View drawer = drawerOf(activity);
-        findByViewTag(drawer, "palette-chip").performClick();
+        openPalette(activity);
         settle();
+        // Settings rebuilds the shell on its way out, so the drawer is looked up afterwards
+        View drawer = drawerOf(activity);
 
         View picker = findByViewTag(drawer, "palette");
         assertNotNull(picker);
@@ -3840,7 +4026,7 @@ public class SlothShellTest {
         SlothShell.own(activity);
         settle();
         View drawer = drawerOf(activity);
-        findByViewTag(drawer, "palette-chip").performClick();
+        openPalette(activity);
         settle();
         View picker = findByViewTag(drawer, "palette");
         assertNotNull(findTagged(picker, "Ancient Bark"));
@@ -3856,7 +4042,7 @@ public class SlothShellTest {
         View drawer = drawerOf(activity);
         assertNotNull("the clock is on the drawer", findChip(drawer, "CLOCK"));
 
-        tapChip(drawer, "Add widget");
+        tapChip(drawer, "Edit");
         settle();
         View chooser = findByViewTag(drawer, "widgets");
         assertNotNull("the chooser", chooser);
@@ -4000,7 +4186,7 @@ public class SlothShellTest {
         handle.dispatchTouchEvent(MotionEvent.obtain(t, t + 40, MotionEvent.ACTION_UP, 200f, 500f, 0));
         settle();
 
-        tapChip(drawerOf(activity), "Add widget");
+        tapChip(drawerOf(activity), "Edit");
         settle();
         tapChip(findByViewTag(drawerOf(activity), "widgets"), "Calculator");
         settle();
@@ -4044,7 +4230,7 @@ public class SlothShellTest {
         settle();
         assertNull("drawer open", SlothShell.mislay());
 
-        tapChip(drawerOf(activity), "Add widget");
+        tapChip(drawerOf(activity), "Edit");
         settle();
         assertNull("widget list", SlothShell.mislay());
 
@@ -4565,7 +4751,7 @@ public class SlothShellTest {
         assertNotNull("the bar is there", bar);
         java.util.List<View> drawn = new java.util.ArrayList<>();
         collectKind(bar, SlothIcons.class, drawn);
-        assertEquals("back, forward, reload, plus, menu, the lock and the tab stack: " + drawn, 7, drawn.size());
+        assertEquals("the search icon, clear, reload and menu: " + drawn, 4, drawn.size());
 
         // and no glyph is left behind them: the old bars were text characters
         java.util.List<View> glyphs = new java.util.ArrayList<>();
@@ -5419,6 +5605,11 @@ public class SlothShellTest {
 
     /** A tab card holds its title in the first TextView inside it. */
     private String tabLabel(View card) {
+        // a card keeps its readable title under a key, apart from "Current tab" and the initial
+        Object kept = card.getTag(SlothBoard.R_TITLE);
+        if (kept != null) {
+            return kept.toString();
+        }
         final String[] out = new String[]{""};
         walk(card, new ViewVisitor() {
             @Override
@@ -5435,8 +5626,17 @@ public class SlothShellTest {
         return out[0];
     }
 
+    /** The palette lives in Settings now: the drawer's footer chips are gone. */
+    private void openPalette(TestActivity activity) {
+        SlothShell.openSettingsPage(activity);
+        settle();
+        tapChip(findByViewTag(overlayOf(activity), "settings-page"), "Palette");
+        settle();
+    }
+
     private View findTabRow(View v) {
-        if (v instanceof LinearLayout && ((LinearLayout) v).getOrientation() == LinearLayout.HORIZONTAL
+        // the cards sit in a grid tagged "tab-row", one child per tab
+        if ("tab-row".equals(v.getTag()) && v instanceof ViewGroup
                 && ((ViewGroup) v).getChildCount() > 0 && isTabRow((ViewGroup) v)) {
             return v;
         }
@@ -5461,4 +5661,318 @@ public class SlothShellTest {
         }
         return false;
     }
+    /* ------------------------------------------------------- the rebuilt bar and drawer */
+
+    private int fullSeat(Activity activity) throws Exception {
+        java.lang.reflect.Method m = SlothShell.class.getDeclaredMethod("fullSeat", Activity.class);
+        m.setAccessible(true);
+        return (Integer) m.invoke(null, activity);
+    }
+
+    /** Three seats: wherever a slow release lands, it rests shut, on the strip or at the top. */
+    @Test
+    public void aSlowReleaseRestsOnOneOfThreeSeats() throws Exception {
+        TestActivity activity = build();
+        addTabs(activity, "Docs", "Mail");
+        SlothShell.own(activity);
+        settle();
+        int peek = peekHeight(activity);
+        int full = fullSeat(activity);
+        java.lang.reflect.Method finish = SlothShell.class.getDeclaredMethod("finishDrag",
+                Activity.class, float.class);
+        finish.setAccessible(true);
+        for (int h : new int[]{peek / 2, peek + px(30), (peek + full) / 2, full - px(30)}) {
+            driveHeight(activity, h);
+            finish.invoke(null, activity, 0f);
+            settle();
+            int rest = drawerOf(activity).getLayoutParams().height;
+            assertTrue("released at " + h + ", rested at " + rest + ", not a seat of {0, "
+                    + peek + ", " + full + "}", rest == 0 || rest == peek || rest == full);
+        }
+    }
+
+    @Test
+    public void theWidgetsStartFoldedAndRememberBeingOpened() {
+        TestActivity activity = build();
+        SlothShell.own(activity);
+        settle();
+        View drawer = drawerOf(activity);
+        View grid = findByViewTag(drawer, "widget-grid");
+        assertEquals("tabs and places first: the widgets wait to be asked", View.GONE,
+                grid.getVisibility());
+        assertEquals("and Edit waits with them", View.GONE,
+                findByViewTag(drawer, "edit-widgets").getVisibility());
+
+        View toggle = findByViewTag(drawer, "widgets-toggle");
+        assertTrue("the fold says what it does: " + toggle.getContentDescription(),
+                String.valueOf(toggle.getContentDescription()).contains("Tap to show"));
+        toggle.performClick();
+        assertEquals(View.VISIBLE, grid.getVisibility());
+        assertEquals(View.VISIBLE, findByViewTag(drawer, "edit-widgets").getVisibility());
+
+        TestActivity again = build();
+        SlothShell.own(again);
+        assertEquals("opened once, they stay open next time", View.VISIBLE,
+                findByViewTag(drawerOf(again), "widget-grid").getVisibility());
+        findByViewTag(drawerOf(again), "widgets-toggle").performClick();
+    }
+
+    @Test
+    public void typingSwapsReloadForClear() {
+        TestActivity activity = build();
+        SlothShell.own(activity);
+        View bar = findByViewTag(overlayOf(activity), "bar");
+        android.widget.EditText field = (android.widget.EditText) findByViewTag(bar, "address");
+        View reload = findByViewTag(bar, "bar-reload");
+        View clear = findByViewTag(bar, "bar-clear");
+        assertEquals("at rest the field ends in reload", View.VISIBLE, reload.getVisibility());
+        assertEquals(View.GONE, clear.getVisibility());
+
+        field.requestFocus();
+        field.setText("sloth");
+        assertEquals("typing: one control at the end, and it clears", View.GONE,
+                reload.getVisibility());
+        assertEquals(View.VISIBLE, clear.getVisibility());
+        clear.performClick();
+        assertEquals("", field.getText().toString());
+
+        // the harness window keeps handing focus back to its only field, so leaving the field is
+        // told to the field's own listener - the call the platform makes on a phone
+        field.getOnFocusChangeListener().onFocusChange(field, false);
+        assertEquals("done typing: reload is back", View.VISIBLE, reload.getVisibility());
+    }
+
+    @Test
+    public void theTabCountSaysHowManyInWords() {
+        TestActivity activity = build();
+        addTabs(activity, "Docs", "Mail", "News");
+        SlothShell.own(activity);
+        SlothShell.tick();
+        View count = findByViewTag(overlayOf(activity), "tab-count");
+        assertEquals("3 tabs. Show the tabs", String.valueOf(count.getContentDescription()));
+        assertNotNull("and draws the number", findChip(count, "3"));
+    }
+
+    @Test
+    public void theGridKeepsOneChildPerCardAndClosesFilteredGaps() {
+        TestActivity activity = build();
+        SlothGrid grid = new SlothGrid(activity, 2, px(10));
+        for (int i = 0; i < 5; i++) {
+            View card = new View(activity);
+            card.setMinimumHeight(px(64));
+            grid.addView(card);
+        }
+        grid.getChildAt(1).setVisibility(View.GONE);
+        grid.measure(View.MeasureSpec.makeMeasureSpec(px(300), View.MeasureSpec.EXACTLY),
+                View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED));
+        grid.layout(0, 0, px(300), grid.getMeasuredHeight());
+        assertEquals("four shown cards make two rows", px(64) * 2 + px(10), grid.getMeasuredHeight());
+        assertEquals("the hidden card's cell is taken by the next one", grid.getChildAt(2).getLeft(),
+                grid.getChildAt(0).getRight() + px(10));
+        assertEquals("columns share the width", grid.getChildAt(0).getWidth(),
+                grid.getChildAt(2).getWidth());
+    }
+
+    /* ----------------------------------------------------------------- page progress */
+
+    /** An engine view with a session, inside the app's own root, as the Find tests build it. */
+    private org.mozilla.geckoview.GeckoSession pageWithSession(TestActivity activity) {
+        org.mozilla.geckoview.GeckoView page = new org.mozilla.geckoview.GeckoView(activity);
+        org.mozilla.geckoview.GeckoSession session = new org.mozilla.geckoview.GeckoSession();
+        page.setSession(session);
+        ViewGroup window = activity.findViewById(android.R.id.content);
+        ((ViewGroup) window.getChildAt(0)).addView(page);
+        return session;
+    }
+
+    /** What the app's own delegate saw, so forwarding can be checked. */
+    private static final class AppDelegate implements org.mozilla.geckoview.GeckoSession.ProgressDelegate {
+        final java.util.List<String> calls = new java.util.ArrayList<>();
+
+        @Override
+        public void onPageStart(org.mozilla.geckoview.GeckoSession session, String url) {
+            calls.add("start " + url);
+        }
+
+        @Override
+        public void onProgressChange(org.mozilla.geckoview.GeckoSession session, int progress) {
+            calls.add("progress " + progress);
+        }
+
+        @Override
+        public void onPageStop(org.mozilla.geckoview.GeckoSession session, boolean success) {
+            calls.add("stop " + success);
+        }
+    }
+
+    @Test
+    public void aLoadingPageShowsItsProgressAndTheAppStillHearsIt() {
+        TestActivity activity = build();
+        org.mozilla.geckoview.GeckoSession session = pageWithSession(activity);
+        AppDelegate app = new AppDelegate();
+        session.setProgressDelegate(app);
+        SlothShell.own(activity);
+        SlothShell.tick();
+
+        org.mozilla.geckoview.GeckoSession.ProgressDelegate wrapped = session.getProgressDelegate();
+        assertNotSame("the session carries the shell's wrapper", app, wrapped);
+        View bar = findByViewTag(overlayOf(activity), "bar");
+        View line = findByViewTag(bar, "progress-line");
+        View reload = findByViewTag(bar, "bar-reload");
+        assertEquals("at rest, no line", View.GONE, line.getVisibility());
+
+        wrapped.onPageStart(session, "https://example.org");
+        wrapped.onProgressChange(session, 40);
+        assertEquals("loading: the line shows", View.VISIBLE, line.getVisibility());
+        assertEquals("at the load's progress", 0.40f, line.getScaleX(), 0.01f);
+        assertEquals("and reload has become Stop", "Stop loading",
+                String.valueOf(reload.getContentDescription()));
+
+        wrapped.onProgressChange(session, 25);
+        assertEquals("a load never runs backwards", 0.40f, line.getScaleX(), 0.01f);
+
+        wrapped.onPageStop(session, true);
+        assertEquals("done: the line goes", View.GONE, line.getVisibility());
+        assertEquals("and reload is reload again", "Reload",
+                String.valueOf(reload.getContentDescription()));
+        assertEquals("the app heard every call, in order",
+                java.util.Arrays.asList("start https://example.org", "progress 40", "progress 25",
+                        "stop true"), app.calls);
+    }
+
+    @Test
+    public void reloadWhileLoadingStopsThePage() {
+        TestActivity activity = build();
+        org.mozilla.geckoview.GeckoSession session = pageWithSession(activity);
+        Counter reloads = new Counter();
+        activity.binding.btnReload.setOnClickListener(reloads);
+        SlothShell.own(activity);
+        SlothShell.tick();
+
+        session.getProgressDelegate().onPageStart(session, "https://example.org");
+        findByViewTag(overlayOf(activity), "bar-reload").performClick();
+        assertEquals("the engine was told to stop", 1, session.stops);
+        assertEquals("not to reload", 0, reloads.clicks);
+        assertEquals("and the bar stops saying it is loading", "Reload",
+                String.valueOf(findByViewTag(overlayOf(activity), "bar-reload").getContentDescription()));
+
+        findByViewTag(overlayOf(activity), "bar-reload").performClick();
+        assertEquals("at rest the same control reloads", 1, reloads.clicks);
+    }
+
+    @Test
+    public void theWrapperIsNeverWrappedTwice() {
+        TestActivity activity = build();
+        org.mozilla.geckoview.GeckoSession session = pageWithSession(activity);
+        SlothShell.own(activity);
+        SlothShell.tick();
+        Object first = session.getProgressDelegate();
+        assertNotNull("a session with no delegate of its own still gets one", first);
+        SlothShell.tick();
+        SlothShell.tick();
+        assertSame("ticking again leaves the same wrapper", first, session.getProgressDelegate());
+
+        // the app sets a delegate of its own later: the next tick wraps that one instead
+        AppDelegate app = new AppDelegate();
+        session.setProgressDelegate(app);
+        SlothShell.tick();
+        assertNotSame(app, session.getProgressDelegate());
+        session.getProgressDelegate().onPageStart(session, "u");
+        assertEquals("and forwards to it", java.util.Collections.singletonList("start u"), app.calls);
+    }
+
+    @Test
+    public void anOldTabsProgressDoesNotMoveTheBar() {
+        TestActivity activity = build();
+        org.mozilla.geckoview.GeckoSession first = pageWithSession(activity);
+        SlothShell.own(activity);
+        SlothShell.tick();
+        org.mozilla.geckoview.GeckoSession.ProgressDelegate oldWrapper = first.getProgressDelegate();
+
+        // the tab changes: the page view now shows another session
+        org.mozilla.geckoview.GeckoView page = (org.mozilla.geckoview.GeckoView)
+                findByClass(activity.findViewById(android.R.id.content),
+                        org.mozilla.geckoview.GeckoView.class);
+        org.mozilla.geckoview.GeckoSession second = new org.mozilla.geckoview.GeckoSession();
+        page.setSession(second);
+        SlothShell.tick();
+
+        oldWrapper.onPageStart(first, "background");
+        assertEquals("a tab in the background loading is not this page loading", View.GONE,
+                findByViewTag(overlayOf(activity), "progress-line").getVisibility());
+        second.getProgressDelegate().onPageStart(second, "front");
+        assertEquals(View.VISIBLE,
+                findByViewTag(overlayOf(activity), "progress-line").getVisibility());
+    }
+
+    @Test
+    public void withNoEngineTheBarSimplyHasNoLine() {
+        TestActivity activity = build();
+        SlothShell.own(activity);
+        SlothShell.tick();
+        assertEquals(View.GONE, findByViewTag(overlayOf(activity), "progress-line").getVisibility());
+        assertEquals("Reload",
+                String.valueOf(findByViewTag(overlayOf(activity), "bar-reload").getContentDescription()));
+    }
+
+    private static View findByClass(View v, Class<?> type) {
+        if (type.isInstance(v)) {
+            return v;
+        }
+        if (v instanceof ViewGroup) {
+            for (int i = 0; i < ((ViewGroup) v).getChildCount(); i++) {
+                View hit = findByClass(((ViewGroup) v).getChildAt(i), type);
+                if (hit != null) {
+                    return hit;
+                }
+            }
+        }
+        return null;
+    }
+
+    /* -------------------------------------------------------------- the address at rest */
+
+    @Test
+    public void theSiteIsWhatTheIdleFieldShows() {
+        assertEquals("example.org", SlothTopBar.display("https://www.example.org/a/b?c=d#e"));
+        assertEquals("example.org", SlothTopBar.display("http://example.org"));
+        assertEquals("news.example.org", SlothTopBar.display("https://news.example.org/"));
+        assertEquals("the sign-in part is not the site", "example.org",
+                SlothTopBar.display("https://user@example.org/x"));
+        assertEquals("localhost:8080", SlothTopBar.display("http://localhost:8080/app"));
+        assertEquals("a search phrase stays a search phrase", "sloth facts",
+                SlothTopBar.display("sloth facts"));
+        assertEquals("about:blank", SlothTopBar.display("about:blank"));
+        assertEquals("", SlothTopBar.display(null));
+    }
+
+    @Test
+    public void goSendsEveryCharacterTypedNotTheShortForm() {
+        TestActivity activity = build();
+        activity.binding.urlBar.setText("https://example.org/start");
+        SlothShell.own(activity);
+        EditText field = findAddress(overlayOf(activity));
+        field.requestFocus();
+        field.setText("https://sloth.example/a/long/path?q=1");
+        DrawerFace.last = null;
+        field.onEditorAction(android.view.inputmethod.EditorInfo.IME_ACTION_GO);
+        assertEquals("the browser was handed the whole thing", "https://sloth.example/a/long/path?q=1",
+                DrawerFace.last);
+    }
+
+    @Test
+    public void aFieldBeingTypedInIsNeverWrittenOver() {
+        TestActivity activity = build();
+        activity.binding.urlBar.setText("https://example.org/start");
+        SlothShell.own(activity);
+        EditText field = findAddress(overlayOf(activity));
+        field.requestFocus();
+        field.setText("half a thou");
+        activity.binding.urlBar.setText("https://example.org/next");
+        SlothShell.tick();
+        assertEquals("the page moved on, the typing stays", "half a thou", field.getText().toString());
+        assertNotNull("while the drawer's line follows the page, not the typing",
+                findChip(drawerOf(activity), "https://example.org/next"));
+    }
+
 }

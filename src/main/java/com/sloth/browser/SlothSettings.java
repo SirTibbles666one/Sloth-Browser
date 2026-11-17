@@ -58,14 +58,18 @@ final class SlothSettings {
 
         final LinearLayout column = new LinearLayout(activity);
         column.setOrientation(LinearLayout.VERTICAL);
-        column.setPadding(dp(activity, 18), dp(activity, 14), dp(activity, 18), dp(activity, 18));
+        // the page is drawn from the top of the window, under the status bar and under
+        // the shell bar. Without this the title and Back sit where a finger cannot see them
+        column.setPadding(dp(activity, 18), dp(activity, 14) + SlothShell.topChromePx(activity),
+                dp(activity, 18), dp(activity, 18));
 
         LinearLayout head = new LinearLayout(activity);
         head.setGravity(Gravity.CENTER_VERTICAL);
         head.setPadding(0, 0, 0, dp(activity, 14));
 
-        TextView back = text(activity, "\u2039", 24f, SlothTheme.ink(), false);
-        back.setGravity(Gravity.CENTER);
+        // drawn, like the bar. A chevron glyph sits on a baseline and does not share
+        // the stroke of the icons the rest of the shell uses
+        SlothIcons back = SlothIcons.of(activity, SlothIcons.Kind.BACK, 18, SlothTheme.ink());
         back.setContentDescription("Back to the drawer");
         back.setBackground(box(activity, 999, SlothTheme.card(), SlothTheme.hairline(0x24)));
         back.setOnClickListener(new View.OnClickListener() {
@@ -85,9 +89,10 @@ final class SlothSettings {
 
         final boolean reached = SlothPrefs.has(activity);
         TextView sub = text(activity, reached
-                        ? "The browser's own settings, in the drawer's clothes."
-                        : "The browser's settings could not be reached - see Recent problems.",
+                        ? "Saved with the browser."
+                        : "The browser's settings could not be reached. See Recent problems.",
                 12f, SlothTheme.muted(), false);
+        sub.setTag("settings-intro");
         sub.setPadding(0, 0, 0, dp(activity, 10));
         column.addView(sub);
 
@@ -309,15 +314,16 @@ final class SlothSettings {
                 if (next > max) {
                     next = min;
                 }
+                // the toggles revert when a write is refused. Painting the new number
+                // first, then discovering the save failed, is the same lie
+                if (!SlothPrefs.write(activity, field, next)) {
+                    SlothLog.error("could not save " + field);
+                    value.setText(show(current[0], suffix, zeroIsNever));
+                    return;
+                }
                 current[0] = next;
-                // the toggles above revert when a write is refused; a stepper that paints the new
-            // number anyway is the same lie in a different control
-            if (!SlothPrefs.write(activity, field, next)) {
-                SlothLog.error("could not save " + field);
-                value.setText(show(current[0], suffix, zeroIsNever));
-                return;
-            }
                 value.setText(show(next, suffix, zeroIsNever));
+                v.setContentDescription(name + ", " + value.getText());
             }
         });
     }
@@ -458,9 +464,9 @@ final class SlothSettings {
         if (trailing != null) {
             row.addView(trailing);
         } else {
-            TextView chevron = text(activity, "\u203a", 18f, SlothTheme.muted(), false);
-            chevron.setGravity(Gravity.CENTER);
-            row.addView(chevron, lp(activity, 24, 24, 0, 0, 0, 0));
+            SlothIcons chevron = SlothIcons.decorative(activity, SlothIcons.Kind.FORWARD, 14,
+                    SlothTheme.muted());
+            row.addView(chevron);
         }
 
         row.setOnClickListener(onClick);
