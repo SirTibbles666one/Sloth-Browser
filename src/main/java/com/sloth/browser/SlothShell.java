@@ -2714,16 +2714,16 @@ public final class SlothShell {
      * <p>Over the page, the page sits under the bar and stays there: opening and shutting the
      * drawer moves nothing under it and lays nothing out again. It is the app's own rule ("the
      * drawer pulls down over the page") and the model Mozilla recommends for a toolbar over
-     * GeckoView. Off by default until it has been tried on a phone.</p>
+     * GeckoView. On by default; pushing the page down is the other choice in Settings.</p>
      */
     static boolean drawerOverPage(Activity activity) {
         if (overPage == null) {
             try {
                 overPage = activity.getSharedPreferences(SHELL_PREFS, Context.MODE_PRIVATE)
-                        .getBoolean("drawerOverPage", false);
+                        .getBoolean("drawerOverPage", true);
             } catch (Throwable t) {
                 SlothLog.swallow("SlothShell.drawerOverPage", t);
-                return false;
+                return true;
             }
         }
         return overPage;
