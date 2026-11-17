@@ -37,7 +37,9 @@ final class SlothDiag {
         out.append("log (").append(SlothLog.count()).append(" lines)\n");
         String log = SlothLog.text();
         out.append(log == null || log.isEmpty() ? "(nothing recorded)" : log).append('\n');
-        return out.toString();
+        // lines kept from older builds may still carry whole addresses: a report that is
+        // made to be pasted into a message carries hosts only
+        return SlothLog.scrub(out.toString());
     }
 
     private static String version(Activity activity) {
@@ -47,6 +49,7 @@ final class SlothDiag {
             String name = info.versionName == null ? "unnamed build" : info.versionName;
             return name + " (" + info.getLongVersionCode() + ")";
         } catch (Throwable t) {
+            SlothLog.swallow("SlothDiag.version", t);
             return "unknown";
         }
     }

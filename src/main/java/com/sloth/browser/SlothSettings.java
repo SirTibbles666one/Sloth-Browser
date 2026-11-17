@@ -407,6 +407,7 @@ final class SlothSettings {
                 return (Boolean) ready;
             }
         } catch (Throwable ignored) {
+            SlothLog.swallow("SlothSettings.vaultPresent", ignored);
             // older vaults only expose the bytes
         }
         try {
@@ -414,6 +415,7 @@ final class SlothSettings {
             Object raw = bytes.invoke(vault);
             return raw instanceof byte[] && ((byte[]) raw).length > 0;
         } catch (Throwable ignored) {
+            SlothLog.swallow("SlothSettings.vaultPresent", ignored);
             return false;
         }
     }
@@ -439,6 +441,7 @@ final class SlothSettings {
             } catch (NoSuchMethodException e) {
                 type = type.getSuperclass();
             } catch (Throwable ignored) {
+                SlothLog.swallow("SlothSettings.invoke", ignored);
                 return null;
             }
         }

@@ -92,6 +92,10 @@ final class SlothSheet {
     private boolean traceFlicked;
     private long traceMs;
 
+    /** Settle frames drawn, and those that came more than two frames late. For Health. */
+    static int settleFrames;
+    static int slowFrames;
+
     SlothSheet(View view, Host host) {
         this.view = view;
         this.host = host;
@@ -228,8 +232,17 @@ final class SlothSheet {
         animating = true;
         final long started = SystemClock.uptimeMillis();
         MAIN.post(new Runnable() {
+            private long last = started;
+
             @Override
             public void run() {
+                long at = SystemClock.uptimeMillis();
+                settleFrames++;
+                if (at - last > 33) {
+                    // a frame posted 16 ms after the last arrived two frames late or worse
+                    slowFrames++;
+                }
+                last = at;
                 if (mine != gen) {
                     // the sheet moved on mid-flight: leave nothing half-transparent behind
                     view.setAlpha(1f);

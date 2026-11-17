@@ -65,6 +65,84 @@ final class SlothLog {
         }
     }
 
+    /** How many errors each place set aside, in the order they first happened. */
+    private static final java.util.LinkedHashMap<String, Integer> SWALLOWED = new java.util.LinkedHashMap<>();
+
+    /**
+     * An error a place set aside on purpose: an optional decoration that did not draw, a
+     * lookup with a fallback. Counted by place, and the first of each place logged, so a
+     * failure that used to vanish shows up in Diagnostics' Health block with a count.
+     */
+    static void swallow(String place, Throwable what) {
+        try {
+            boolean first;
+            synchronized (SWALLOWED) {
+                Integer seen = SWALLOWED.get(place);
+                first = seen == null;
+                SWALLOWED.put(place, seen == null ? 1 : seen + 1);
+            }
+            if (first) {
+                String message = what == null ? "" : what.getClass().getSimpleName()
+                        + (what.getMessage() == null ? "" : ": " + what.getMessage());
+                record("SET ASIDE ", place + " - " + message, false);
+            }
+        } catch (Throwable ignored) {
+            // the log of last resort has nowhere to report its own failure
+        }
+    }
+
+    /** Errors set aside, all places together. */
+    static int swallowedTotal() {
+        synchronized (SWALLOWED) {
+            int total = 0;
+            for (int count : SWALLOWED.values()) {
+                total += count;
+            }
+            return total;
+        }
+    }
+
+    /** The places that set errors aside, most first, at most {@code limit} of them. */
+    static String swallowedTop(int limit) {
+        java.util.List<java.util.Map.Entry<String, Integer>> rows;
+        synchronized (SWALLOWED) {
+            rows = new java.util.ArrayList<>(SWALLOWED.entrySet());
+        }
+        java.util.Collections.sort(rows, new java.util.Comparator<java.util.Map.Entry<String, Integer>>() {
+            @Override
+            public int compare(java.util.Map.Entry<String, Integer> a, java.util.Map.Entry<String, Integer> b) {
+                return b.getValue() - a.getValue();
+            }
+        });
+        StringBuilder out = new StringBuilder();
+        for (int i = 0; i < rows.size() && i < limit; i++) {
+            out.append("  ").append(rows.get(i).getValue()).append("x ").append(rows.get(i).getKey())
+                    .append('\n');
+        }
+        return out.toString();
+    }
+
+    /** For the harness: a fresh count. */
+    static void forgetSwallowedForTest() {
+        synchronized (SWALLOWED) {
+            SWALLOWED.clear();
+        }
+    }
+
+    private static final java.util.regex.Pattern URL =
+            java.util.regex.Pattern.compile("(?i)\\b(https?://)([^/\\s?#]+)[^\\s]*");
+
+    /**
+     * The log is meant to be copied into a message, so it keeps where a page was, not what:
+     * an address keeps its scheme and host, and loses its path, query and fragment.
+     */
+    static String scrub(String text) {
+        if (text == null || text.indexOf("://") < 0) {
+            return text;
+        }
+        return URL.matcher(text).replaceAll("$1$2");
+    }
+
     /** A fault the person needs to see: the shell could not do what was asked. */
     static void error(String what) {
         record("ERROR ", what, true);
@@ -89,7 +167,7 @@ final class SlothLog {
      */
     private static void record(String prefix, String what, boolean durable) {
         try {
-            String line = TIME.format(new Date()) + "  " + prefix + what;
+            String line = TIME.format(new Date()) + "  " + prefix + scrub(what);
             synchronized (LINES) {
                 // a fault is worth more than any note, so it is kept in a ring of its own: the
                 // 120-line ring below is shared with the probe and the tick, and a busy minute

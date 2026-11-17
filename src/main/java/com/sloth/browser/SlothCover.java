@@ -51,6 +51,7 @@ final class SlothCover {
                             return (View) v;
                         }
                     } catch (Throwable ignored) {
+                        SlothLog.swallow("SlothCover.findPage", ignored);
                         // not reachable in this build; nothing to report from it
                     }
                 }
@@ -113,6 +114,7 @@ final class SlothCover {
             int found = findCovers(window.getDecorView(), page, pageRect, above, covers, 0);
             out.append("over the page: ").append(found == 0 ? "nothing" : covers.toString());
         } catch (Throwable t) {
+            SlothLog.swallow("SlothCover.describe", t);
             out.append("page probe failed: ").append(t.getClass().getSimpleName());
         }
         return out.toString();
@@ -140,6 +142,7 @@ final class SlothCover {
                 }
             }
         } catch (Throwable ignored) {
+            SlothLog.swallow("SlothCover.sessionState", ignored);
         }
         return "not readable";
     }

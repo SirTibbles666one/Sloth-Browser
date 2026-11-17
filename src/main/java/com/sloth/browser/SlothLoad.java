@@ -72,6 +72,7 @@ final class SlothLoad {
         try {
             session = SlothFind.session(activity);
         } catch (Throwable noEngine) {
+            SlothLog.swallow("SlothLoad.watch", noEngine);
             // no page view: nothing is on screen, and an old session must not answer for it
             showing = new WeakReference<>(null);
             return false;
@@ -265,6 +266,7 @@ final class SlothLoad {
             SlothLog.note("stopped the page");
             return true;
         } catch (Throwable t) {
+            SlothLog.swallow("SlothLoad.stop", t);
             return false;
         }
     }

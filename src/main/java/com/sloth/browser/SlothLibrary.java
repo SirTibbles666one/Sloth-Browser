@@ -173,6 +173,7 @@ final class SlothLibrary {
         try {
             list = vaultList(kind);
         } catch (Throwable t) {
+            SlothLog.swallow("SlothLibrary.listing", t);
             vaultWhy = t;
         }
         if (list instanceof java.lang.Iterable && ((java.lang.Iterable<?>) list).iterator().hasNext()) {
@@ -189,6 +190,7 @@ final class SlothLibrary {
             await(listOn(store));
             return true;
         } catch (Throwable engineWhy) {
+            SlothLog.swallow("SlothLibrary.listing", engineWhy);
             if (list instanceof java.lang.Iterable) {
                 // the vault answered and it is simply empty: that is an answer, not a failure
                 render(list);
@@ -283,6 +285,7 @@ final class SlothLibrary {
                 return host.startsWith("www.") ? host.substring(4) : host;
             }
         } catch (Throwable ignored) {
+            SlothLog.swallow("SlothLibrary.titleFor", ignored);
             // a URL this build cannot parse is still saved under itself
         }
         return url;
@@ -519,6 +522,7 @@ final class SlothLibrary {
             Object v = m.invoke(item);
             return v instanceof Number ? ((Number) v).longValue() : 0L;
         } catch (Throwable ignored) {
+            SlothLog.swallow("SlothLibrary.longAt", ignored);
             return 0L;
         }
     }
@@ -534,6 +538,7 @@ final class SlothLibrary {
                     return String.valueOf(v);
                 }
             } catch (Throwable ignored) {
+                SlothLog.swallow("SlothLibrary.first", ignored);
                 // try the next name
             }
         }
