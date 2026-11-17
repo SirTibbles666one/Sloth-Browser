@@ -6454,4 +6454,136 @@ public class SlothShellTest {
         assertEquals("and only once", caught + 1, SlothShell.backstopCatches);
     }
 
+    /* ----------------------------------------------------------------- the page stack */
+
+    private static final String[] PAGES = {"diag-page", "find-bar", "library-page", "settings-page"};
+
+    private static void openPage(Activity activity, String tag) {
+        if ("diag-page".equals(tag)) {
+            SlothShell.openDiagPage(activity);
+        } else if ("find-bar".equals(tag)) {
+            SlothShell.openFind(activity);
+        } else if ("library-page".equals(tag)) {
+            SlothShell.openLibrary(activity, "history");
+        } else {
+            SlothShell.openSettingsPage(activity);
+        }
+    }
+
+    private boolean pageShowing(Activity activity, String tag) {
+        View page = findByViewTag(overlayOf(activity), tag);
+        return page != null && page.getVisibility() == View.VISIBLE;
+    }
+
+    /** Whatever was opened last is what Back closes first, for every pair, both ways round. */
+    @Test
+    public void backClosesTheMostRecentLayerFirst() {
+        for (String first : PAGES) {
+            for (String second : PAGES) {
+                if (first.equals(second)) {
+                    continue;
+                }
+                TestActivity activity = build();
+                SlothShell.own(activity);
+                settle();
+                openPage(activity, first);
+                settle();
+                openPage(activity, second);
+                settle();
+                assertTrue(second + " opened over " + first, pageShowing(activity, second));
+                boolean firstStillUp = pageShowing(activity, first);
+                assertTrue("back did something", SlothShell.backOneLayer(activity));
+                settle();
+                assertFalse("back closed " + second + ", the newer one, over " + first,
+                        pageShowing(activity, second));
+                assertEquals(first + " is left as it was", firstStillUp, pageShowing(activity, first));
+                if (firstStillUp) {
+                    SlothShell.backOneLayer(activity);
+                    settle();
+                    assertFalse("then " + first, pageShowing(activity, first));
+                }
+                SlothShell.releaseShellForTest();
+            }
+        }
+    }
+
+    /** The case the fixed order got wrong: Find over Diagnostics. */
+    @Test
+    public void findOverDiagnosticsClosesFindFirst() {
+        TestActivity activity = build();
+        SlothShell.own(activity);
+        settle();
+        SlothShell.openDiagPage(activity);
+        settle();
+        SlothShell.openFind(activity);
+        settle();
+        assertTrue(pageShowing(activity, "diag-page"));
+        SlothShell.backOneLayer(activity);
+        settle();
+        assertFalse("find, the newer layer, went first", pageShowing(activity, "find-bar"));
+        assertTrue("diagnostics is still there under it", pageShowing(activity, "diag-page"));
+    }
+
+    /** A layer closed by its own button is not the one Back closes next. */
+    @Test
+    public void aLayerThatClosedItselfIsSkipped() {
+        TestActivity activity = build();
+        SlothShell.own(activity);
+        settle();
+        SlothShell.openLibrary(activity, "history");
+        settle();
+        SlothShell.openFind(activity);
+        settle();
+        SlothShell.closeFind(activity);
+        settle();
+        assertTrue("library is on top now", SlothShell.backOneLayer(activity));
+        settle();
+        assertFalse(pageShowing(activity, "library-page"));
+    }
+
+    /** A list in the drawer goes first; the drawer it sits in goes next. */
+    @Test
+    public void backClosesTheWidgetListThenTheDrawer() throws Exception {
+        TestActivity activity = build();
+        SlothShell.own(activity);
+        settle();
+        SlothShell.openWidgetChooser(activity);
+        settle();
+        View list = findByViewTag(drawerOf(activity), "widgets");
+        assertEquals(View.VISIBLE, list.getVisibility());
+        SlothShell.backOneLayer(activity);
+        settle();
+        assertEquals("the list went", View.GONE, list.getVisibility());
+        assertTrue("the drawer is still open", drawerOf(activity).getLayoutParams().height > 0);
+        SlothShell.backOneLayer(activity);
+        settle();
+        assertEquals("then the drawer", 0, drawerOf(activity).getLayoutParams().height);
+    }
+
+    /** A list whose drawer was shut under it is not open, whatever its own flag says. */
+    @Test
+    public void aListInAShutDrawerIsNotALayer() throws Exception {
+        TestActivity activity = build();
+        SlothShell.own(activity);
+        settle();
+        SlothShell.openWidgetChooser(activity);
+        settle();
+        driveHeight(activity, 0);
+        assertEquals("nothing is open", "none", SlothPages.describe());
+        assertFalse("so back has nothing of ours to close", SlothShell.backOneLayer(activity));
+    }
+
+    /** A new window starts with nothing on the stack. */
+    @Test
+    public void aNewWindowStartsWithNoLayers() {
+        TestActivity activity = build();
+        SlothShell.own(activity);
+        settle();
+        SlothShell.openDiagPage(activity);
+        settle();
+        assertEquals("diagnostics", SlothPages.describe());
+        SlothShell.releaseShellForTest();
+        assertEquals("none", SlothPages.describe());
+    }
+
 }
