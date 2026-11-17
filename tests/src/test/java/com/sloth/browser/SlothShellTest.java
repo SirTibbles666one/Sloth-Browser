@@ -7516,6 +7516,18 @@ public class SlothShellTest {
         return null;
     }
 
+    /** The sloth hangs below the content, never behind it. */
+    @Test
+    public void theSlothKeepsOutFromBehindTheContent() {
+        assertEquals("nobody said where the content ends: as before", 1f,
+                SlothBackdrop.slothRoom(500f, 100f, 0f), 0.001f);
+        assertEquals("well clear of the content", 1f, SlothBackdrop.slothRoom(500f, 100f, 300f), 0.001f);
+        assertEquals("the content reaches past his head: he goes", 0f,
+                SlothBackdrop.slothRoom(500f, 100f, 520f), 0.001f);
+        float half = SlothBackdrop.slothRoom(500f, 100f, 500f - 16.5f);
+        assertTrue("and in between he fades: " + half, half > 0.4f && half < 0.6f);
+    }
+
     /** A list over the drawer hides the drawer from a screen reader, and gives it back after. */
     @Test
     public void aScreenReaderCannotWalkUnderAListOverTheDrawer() {
