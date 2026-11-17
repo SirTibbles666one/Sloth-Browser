@@ -6771,6 +6771,57 @@ public class SlothShellTest {
                 report.contains("private/page") || report.contains("token=xyz"));
     }
 
+    /* ------------------------------------------------------------ drawer over the page */
+
+    /** Over the page: opening and shutting the drawer neither moves the page nor lays it out. */
+    @Test
+    public void overThePageTheDrawerMovesNothingUnderIt() throws Exception {
+        TestActivity activity = build();
+        activity.getSharedPreferences(SlothShell.SHELL_PREFS, android.content.Context.MODE_PRIVATE)
+                .edit().putBoolean("drawerOverPage", true).commit();
+        SlothShell.own(activity);
+        settle();
+        ViewGroup content = activity.findViewById(android.R.id.content);
+        View page = content.getChildAt(0) == overlayOf(activity) ? content.getChildAt(1)
+                : content.getChildAt(0);
+        int restingPad = page.getPaddingTop();
+        java.lang.reflect.Field relayouts = SlothShell.class.getDeclaredField("pageRelayouts");
+        relayouts.setAccessible(true);
+        int before = relayouts.getInt(null);
+
+        SlothBar.Listener gesture = shellGesture(activity);
+        gesture.onDragStart(300f, 0f);
+        gesture.onDrag(px(200));
+        org.robolectric.shadows.ShadowLooper.idleMainLooper();
+        assertEquals("mid-drag, the page has not moved", 0f, page.getTranslationY(), 0.01f);
+        gesture.onRelease(1.5f);
+        settle();
+        assertTrue("the drawer opened", drawerOf(activity).getLayoutParams().height > 0);
+        assertEquals("the page still sits under the bar alone", restingPad, page.getPaddingTop());
+        assertEquals(0f, page.getTranslationY(), 0.01f);
+
+        SlothShell.backOneLayer(activity);
+        settle();
+        assertEquals("and no relayout, opening or shutting", before, relayouts.getInt(null));
+    }
+
+    /** The setting is a row in Settings, says which way it is, and switches both ways. */
+    @Test
+    public void theDrawerModeIsASettingThatSaysWhichWayItIs() {
+        TestActivity activity = build();
+        SlothShell.own(activity);
+        SlothShell.openSettingsPage(activity);
+        settle();
+        View page = findByViewTag(overlayOf(activity), "settings-page");
+        assertNotNull("pushes the page down by default", findChip(page, "Pushes the page down"));
+        tapChip(page, "Drawer");
+        assertTrue(SlothShell.drawerOverPage(activity));
+        assertNotNull(findChip(page, "Covers the page"));
+        tapChip(page, "Drawer");
+        assertFalse(SlothShell.drawerOverPage(activity));
+        assertNotNull(findChip(page, "Pushes the page down"));
+    }
+
     /** The shell's own gesture, the one every surface reports into. */
     private static SlothBar.Listener shellGesture(Activity activity) throws Exception {
         java.lang.reflect.Method m = SlothShell.class.getDeclaredMethod("sheetGesture", Activity.class);
