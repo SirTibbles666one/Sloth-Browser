@@ -18,84 +18,73 @@ import java.util.Date;
 import java.util.Locale;
 
 /**
- * The reworked dashboard, built in code.
+ * The drawer's content, in the order you reach for it: where you are, your tabs, the places
+ * the browser can take you, and the widgets - folded away until asked for.
  *
- * It replaces DrawerFace's shelf, which had three problems the audit found: colours
- * hardcoded at the call site so skins could not reach them, no contentDescription on
- * any control, and raw px text sizes that ignore the system font scale. Everything
- * here comes from one token set, every control is labelled for TalkBack, and text
- * sizes are sp so the phone's own setting applies.
- *
- * Controls forward to the browser's bound widgets with performClick(), so tabs, the
- * menu, add-ons and the updater keep their real behaviour.
+ * <p>Built in code from the theme's tokens. Every control is labelled for TalkBack, every
+ * text size is sp, and every action forwards to the browser's own bound widget with
+ * {@code performClick()} so tabs, history and the updater keep the app's behaviour.</p>
  */
 final class SlothBoard {
 
-    /* tokens - a skin changes these and the whole surface follows */
-    // filled from the active theme when the board is built
-    static int BG = 0xFF0D1411;
-    static int CARD = 0xFF1B2722;
-    static int INK = 0xFFEEF7F1;
-    static int DIM = 0xFFB9C9BD;
-    static int ACCENT = SlothTheme.accent();
-    static int ACCENT_INK = 0xFF101A12;
+    /** More tabs than this and the drawer offers a field to find one. */
+    static final int FILTER_AT = 6;
+
+    /** The widgets the drawer can show, in the order it shows them. */
+    static final String[] KINDS = {"clock", "calc", "notes", "tabs", "note"};
+
+    private static final String PREFS = "slothworks";
 
     private final Activity activity;
     private final LinearLayout root;
 
-    /** How many children the dashboard has; the reveal has to reach all of them. */
-    int cardCount() {
-        return root == null ? 0 : root.getChildCount();
-    }
-    private LinearLayout tabRow;
-    private TextView clock;
-    private TextView editButton;
-    private TextView subTitle;
-    private SlothBar.Listener dragSink;
-    private Runnable onPick;
-    private View shelf;
-    private EditText tabFilter;
     private TextView site;
     private View siteDot;
-    private View shelfLabel;
+    private TextView tabCountBadge;
+    private EditText tabFilter;
+    private SlothGrid tabGrid;
+    private SlothGrid shortcutGrid;
+    private View backCell;
+    private View forwardCell;
+    private View widgetHeader;
+    private SlothIcons widgetChevron;
+    private TextView editButton;
+    private LinearLayout widgetBody;
+    private boolean widgetsOpen;
+
+    private Runnable onPick;
+    private Runnable onEditWidgets;
+    private Runnable onResize;
+
+    private TextView clock;
     private TextView tabsStat;
     private TextView noteStat;
-    /** Widget tiles by kind, and the kinds the owner has put away. */
-    /**
-     * Every view a widget owns, by kind.
-     *
-     * <p>A widget used to be three unrelated facts: a builder method, a hand-written addView at a
-     * fixed slot, and a name in a set of hidden kinds. Only the tile was registered, so the
-     * calculator's keypad - added beside its card rather than inside it - stayed on screen when the
-     * widget was switched off. One map from kind to the views it owns makes hiding whole.</p>
-     */
-    /** Views this class hid itself, so un-hiding restores only what it took away. */
-    private final java.util.HashSet<View> hiddenByUs = new java.util.HashSet<>();
+
+    /** Every view a widget owns, by kind, so hiding the calculator takes its keypad too. */
     private final java.util.LinkedHashMap<String, java.util.ArrayList<View>> widgetViews =
             new java.util.LinkedHashMap<>();
-    private final java.util.LinkedHashMap<String, LinearLayout> widgetTiles =
-            new java.util.LinkedHashMap<>();
+    private final java.util.LinkedHashMap<String, View> widgetTiles = new java.util.LinkedHashMap<>();
     private final java.util.LinkedHashSet<String> hiddenWidgets = new java.util.LinkedHashSet<>();
+    /** Views this class hid, so showing a widget again restores only what it took away. */
+    private final java.util.HashSet<View> hiddenByUs = new java.util.HashSet<>();
 
     SlothBoard(Activity activity) {
         this.activity = activity;
         this.root = new LinearLayout(activity);
-        BG = SlothTheme.bg();
-        CARD = SlothTheme.card();
-        INK = SlothTheme.ink();
-        DIM = SlothTheme.dim();
-        ACCENT = SlothTheme.accent();
-        ACCENT_INK = SlothTheme.accentInk();
+        root.setOrientation(LinearLayout.VERTICAL);
+        root.setTag("board");
+        root.setPadding(0, dp(2), 0, dp(16));
         try {
-            java.util.Set<String> stored = activity.getSharedPreferences("slothworks", Context.MODE_PRIVATE)
-                    .getStringSet("hiddenWidgets", null);
+            android.content.SharedPreferences prefs =
+                    activity.getSharedPreferences(PREFS, Context.MODE_PRIVATE);
+            java.util.Set<String> stored = prefs.getStringSet("hiddenWidgets", null);
             if (stored != null) {
                 hiddenWidgets.addAll(stored);
             }
+            widgetsOpen = prefs.getBoolean("widgetsOpen", false);
         } catch (Throwable ignored) {
+            // no preferences: every widget shown, the shelf folded
         }
-        root.setOrientation(LinearLayout.VERTICAL);
-        root.setTag("board");
         build();
     }
 
@@ -103,59 +92,136 @@ final class SlothBoard {
         return root;
     }
 
-    /** Told when a tab is chosen, so the drawer can close itself. */
-    /** The drawer's head line: where this tab actually is. */
+    /** How many sections the drawer has; the entrance has to reach every one. */
+    int cardCount() {
+        return root.getChildCount();
+    }
+
+    void onTabPicked(Runnable action) {
+        onPick = action;
+    }
+
+    /** Told when the drawer's content changes height on its own, so the sheet can follow. */
+    void onResize(Runnable action) {
+        onResize = action;
+    }
+
+    /** Where "Edit" leads: the shell's chooser, the one place widgets change. */
+    void setEditSink(Runnable sink) {
+        onEditWidgets = sink;
+    }
+
+    /* ------------------------------------------------------------------ build */
+    private void build() {
+        root.addView(head());
+        root.addView(sectionHeader("Tabs", true));
+        root.addView(tabFilter());
+        tabGrid = new SlothGrid(activity, 2, dp(10));
+        tabGrid.setTag("tab-row");
+        tabGrid.setPadding(0, dp(2), 0, dp(4));
+        root.addView(tabGrid, full());
+        root.addView(sectionHeader("Go to", false));
+        root.addView(shortcuts(), full());
+        root.addView(widgetHeader());
+        root.addView(widgets(), full());
+        applyWidgetsOpen();
+    }
+
+    private LinearLayout.LayoutParams full() {
+        return new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+    }
+
+    /**
+     * Where the page is, and the way out. The row copies the address - the thing people want
+     * from a URL they can see - and the dot says whether the connection is encrypted.
+     */
+    private View head() {
+        // no drag wrapper: the head sits in the scrolling list, which already hands a pull
+        // past its top to the sheet - a second handler would fight it for the same gesture
+        LinearLayout head = new LinearLayout(activity);
+        head.setOrientation(LinearLayout.HORIZONTAL);
+        head.setGravity(Gravity.CENTER_VERTICAL);
+        head.setPadding(0, dp(6), 0, dp(4));
+
+        LinearLayout siteRow = new LinearLayout(activity);
+        siteRow.setOrientation(LinearLayout.HORIZONTAL);
+        siteRow.setGravity(Gravity.CENTER_VERTICAL);
+        siteRow.setTag("site-row");
+        siteRow.setClickable(true);
+        siteRow.setFocusable(true);
+        siteRow.setMinimumHeight(dp(44));
+        siteDot = new View(activity);
+        LinearLayout.LayoutParams dotLp = new LinearLayout.LayoutParams(dp(8), dp(8));
+        dotLp.rightMargin = dp(10);
+        siteRow.addView(siteDot, dotLp);
+        site = text("", 13f, SlothTheme.dim(), false);
+        site.setMaxLines(1);
+        site.setEllipsize(TextUtils.TruncateAt.MIDDLE);
+        siteRow.addView(site, new LinearLayout.LayoutParams(0,
+                ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+        siteRow.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                copyAddress();
+            }
+        });
+        head.addView(siteRow, new LinearLayout.LayoutParams(0,
+                ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+
+        View close = roundButton(SlothIcons.Kind.CLOSE, "Close the drawer", 15,
+                SlothTheme.lineAt(0x14));
+        close.setTag("board-close");
+        close.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                closeDrawer();
+            }
+        });
+        LinearLayout.LayoutParams closeLp = new LinearLayout.LayoutParams(dp(44), dp(44));
+        closeLp.leftMargin = dp(8);
+        head.addView(close, closeLp);
+        onSite(null);
+        return head;
+    }
+
+    /** The drawer's head line: where this tab is. Unchanged text is not rewritten. */
     void onSite(String address) {
         if (site == null) {
             return;
         }
         String shown = address == null || address.length() == 0 ? "No page open" : address;
-        if (shown.contentEquals(site.getText()) && siteDot != null && siteDot.getBackground() != null) {
-            return; // nothing changed: the timer asks every 800 ms
+        if (shown.contentEquals(site.getText()) && siteDot.getBackground() != null) {
+            return;
         }
         site.setText(shown);
-        site.setContentDescription("Current page: " + shown + ". Tap to copy the address");
-        if (subTitle != null) {
-            String host = shown;
-            int scheme = host.indexOf("://");
-            if (scheme >= 0) {
-                host = host.substring(scheme + 3);
-            }
-            int slash = host.indexOf('/');
-            if (slash > 0) {
-                host = host.substring(0, slash);
-            }
-            boolean none = host.length() == 0 || host.startsWith("No page");
-            subTitle.setText(none ? "DASHBOARD" : host.toUpperCase(Locale.UK));
-        }
+        String spoken = "No page open".equals(shown)
+                ? "No page open"
+                : "Current page: " + shown + ". Tap to copy the address";
+        site.setContentDescription(spoken);
         if (site.getParent() instanceof View) {
-            ((View) site.getParent()).setContentDescription("Current page: " + shown
-                    + ". Tap to copy the address");
+            ((View) site.getParent()).setContentDescription(spoken);
         }
-        if (siteDot != null) {
-            int colour = SlothTheme.muted();
-            if (shown.startsWith("https://")) {
-                colour = SlothTheme.accent();
-            } else if (shown.startsWith("http://")) {
-                colour = 0xFFE2A05A;
-            }
-            android.graphics.drawable.GradientDrawable dot = new android.graphics.drawable.GradientDrawable();
-            dot.setShape(android.graphics.drawable.GradientDrawable.OVAL);
-            dot.setColor(colour);
-            siteDot.setBackground(dot);
+        int colour = SlothTheme.muted();
+        if (shown.startsWith("https://")) {
+            colour = SlothTheme.accent();
+        } else if (shown.startsWith("http://")) {
+            colour = 0xFFE2A05A;
         }
+        GradientDrawable dot = new GradientDrawable();
+        dot.setShape(GradientDrawable.OVAL);
+        dot.setColor(colour);
+        siteDot.setBackground(dot);
     }
 
-    /** Put the address on the clipboard, and say so - silence after a tap reads as a bug. */
-    private void copyAddress(Activity activity) {
+    private void copyAddress() {
         CharSequence value = site == null ? null : site.getText();
         if (value == null || value.length() == 0 || "No page open".contentEquals(value)) {
             return;
         }
         try {
-            android.content.ClipboardManager clipboard =
-                    (android.content.ClipboardManager) activity.getSystemService(
-                            android.content.Context.CLIPBOARD_SERVICE);
+            android.content.ClipboardManager clipboard = (android.content.ClipboardManager)
+                    activity.getSystemService(Context.CLIPBOARD_SERVICE);
             if (clipboard != null) {
                 clipboard.setPrimaryClip(android.content.ClipData.newPlainText("Address", value));
                 android.widget.Toast.makeText(activity, "Address copied",
@@ -166,175 +232,75 @@ final class SlothBoard {
         }
     }
 
-    void onTabPicked(Runnable action) {
-        onPick = action;
-    }
-
-    /* ------------------------------------------------------------------ build */
-    private void build() {
-        // No masthead. The bar above this panel is the header of the dashboard - it carries
-        // the address, the controls and the way out - so a second title with its own close
-        // button was the clearest remaining sign that these were two surfaces pretending to
-        // be one.
-        root.setTag("board");
-
-        site = text("", 12f, DIM, false);
-        site.setSingleLine(true);
-        site.setEllipsize(TextUtils.TruncateAt.END);
-        LinearLayout.LayoutParams siteLp = new LinearLayout.LayoutParams(
-                0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f);
-        site.setLayoutParams(siteLp);
-
-        // a dot and the address: the dot says whether the connection is encrypted, the row
-        // copies the address, which is the thing people actually want from a URL they can see
-        siteDot = new View(activity);
-        LinearLayout.LayoutParams dotLp = new LinearLayout.LayoutParams(dp(6), dp(6));
-        dotLp.rightMargin = dp(7);
-        dotLp.gravity = Gravity.CENTER_VERTICAL;
-        siteDot.setLayoutParams(dotLp);
-
-        final LinearLayout siteRow = new LinearLayout(activity);
-        siteRow.setOrientation(LinearLayout.HORIZONTAL);
-        siteRow.setGravity(Gravity.CENTER_VERTICAL);
-        siteRow.setTag("site-row");
-        siteRow.setClickable(true);
-        siteRow.setFocusable(true);
-        siteRow.setPadding(0, dp(2), 0, dp(2));
-        siteRow.addView(siteDot);
-        siteRow.addView(site);
-        LinearLayout.LayoutParams siteRowLp = new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
-        siteRowLp.bottomMargin = dp(8);
-        siteRow.setLayoutParams(siteRowLp);
-        siteRow.setOnClickListener(new View.OnClickListener() {
-            @Override
-            public void onClick(View v) {
-                copyAddress(activity);
-            }
-        });
-        root.addView(siteRow);
-        root.addView(tabFilter());
-        root.addView(tabHeader());
-        root.addView(tabStrip());
-        afterTabs = actions();
-        addFull(root, afterTabs);
-        shelfLabel = label("WIDGETS", true);
-        shelf = widgets();
-        root.addView(shelfLabel);
-        root.addView(shelf);
-    }
-
-    /** The shell hands the drawer the same drag rules the bar uses. */
-    void setDragSink(SlothBar.Listener sink) {
-        this.dragSink = sink;
-    }
-
-    private View header() {
-        final SlothBar wrap = new SlothBar(activity);
-        wrap.setTag("head-drag");
-        wrap.setListener(new SlothBar.Listener() {
-            @Override
-            public void onDragStart(float y, float carry) {
-                if (dragSink != null) dragSink.onDragStart(y, carry);
-            }
-
-            @Override
-            public void onDrag(float dy) {
-                if (dragSink != null) dragSink.onDrag(dy);
-            }
-
-            @Override
-            public boolean onSwipe(float dx) {
-                // the header sits inside the sheet: a sideways flick here is the sheet's
-                // own scroller's business, not a tab change
-                return false;
-            }
-
-            @Override
-            public void onRelease(float velocity) {
-                if (dragSink != null) dragSink.onRelease(velocity);
-            }
-
-            @Override
-            public void onTap() {
-                // a tap on the head is not a drawer gesture
-            }
-        });
-        LinearLayout head = new LinearLayout(activity);
-        head.setOrientation(LinearLayout.HORIZONTAL);
-        head.setGravity(Gravity.CENTER_VERTICAL);
-        head.setPadding(0, dp(14), 0, dp(6));
-
-        LinearLayout mark = new LinearLayout(activity);
-        mark.setOrientation(LinearLayout.HORIZONTAL);
-        mark.setGravity(Gravity.CENTER_VERTICAL);
-
-        TextView avatar = text("\uD83E\uDD9C", 15f, INK, true);
-        avatar.setGravity(Gravity.CENTER);
-        avatar.setBackground(outline(999, CARD, SlothTheme.hairline(0x33)));
-        avatar.setContentDescription("Sloth");
-        LinearLayout.LayoutParams avLp = new LinearLayout.LayoutParams(dp(34), dp(34));
-        avLp.rightMargin = dp(10);
-        mark.addView(avatar, avLp);
-
-        TextView word = text("Sloth", 22f, INK, true);
-        // the second line is the page, because that is the fact you came here to see;
-        // the product name is already on the first line
-        subTitle = text("DASHBOARD", 11f, DIM, true);
-        subTitle.setLetterSpacing(0.10f);
-        subTitle.setSingleLine(true);
-        subTitle.setEllipsize(TextUtils.TruncateAt.END);
-        LinearLayout.LayoutParams subLp = new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
-        subLp.leftMargin = dp(8);
-        subLp.bottomMargin = dp(3);
-        mark.addView(word, new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT));
-        mark.addView(subTitle, subLp);
-        head.addView(mark, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
-
-        // a 44 dp target with a 16 dp cross inside it: a drawn icon has no intrinsic
-        // size, so handing it a wrap_content slot let it stretch into a wide empty capsule
-        LinearLayout closeButton = new LinearLayout(activity);
-        closeButton.setGravity(Gravity.CENTER);
-        closeButton.setBackground(outline(999, 0, SlothTheme.hairline(0x33)));
-        closeButton.setContentDescription("Close the dashboard");
-        closeButton.setClickable(true);
-        closeButton.setFocusable(true);
-        SlothIcons cross = SlothIcons.of(activity, SlothIcons.Kind.CLOSE, 14, INK);
-        // the button speaks for itself; a clickable child would be a second, silent control
-        cross.setClickable(false);
-        cross.setFocusable(false);
-        closeButton.addView(cross, new LinearLayout.LayoutParams(dp(14), dp(14)));
-        closeButton.setOnClickListener(new View.OnClickListener() {
-            @Override
-            public void onClick(View v) {
-                closeDrawer();
-            }
-        });
-        head.addView(closeButton, new LinearLayout.LayoutParams(dp(44), dp(44)));
-        wrap.addView(head, new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
-        return wrap;
-    }
-
     /**
-     * The browser's own tab strip, mirrored. Titles come from the chip's TextView,
-     * and the row is rebuilt when a title changes rather than only when a tab is added.
+     * A section's title. The tabs section also carries how many there are and the way to
+     * open another, because those are the two things you want next to a list of tabs.
      */
-    private static final int FILTER_AT = 6;
+    private View sectionHeader(String title, boolean tabs) {
+        LinearLayout header = new LinearLayout(activity);
+        header.setOrientation(LinearLayout.HORIZONTAL);
+        header.setGravity(Gravity.CENTER_VERTICAL);
+        header.setPadding(0, dp(tabs ? 8 : 18), 0, dp(8));
+        header.setMinimumHeight(dp(tabs ? 52 : 44));
 
-    /** Only worth the space once there are enough tabs to lose one in. */
+        TextView label = text(title, 15f, SlothTheme.ink(), true);
+        header.addView(label);
+        if (!tabs) {
+            return header;
+        }
+        tabCountBadge = text("0", 12f, SlothTheme.dim(), true);
+        tabCountBadge.setTag("tab-count-badge");
+        tabCountBadge.setGravity(Gravity.CENTER);
+        tabCountBadge.setMinWidth(dp(24));
+        tabCountBadge.setPadding(dp(7), dp(1), dp(7), dp(1));
+        tabCountBadge.setBackground(fill(999, SlothTheme.lineAt(0x1A), 0));
+        LinearLayout.LayoutParams badgeLp = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        badgeLp.leftMargin = dp(8);
+        header.addView(tabCountBadge, badgeLp);
+        header.addView(new View(activity), new LinearLayout.LayoutParams(0, 1, 1f));
+
+        LinearLayout newTab = new LinearLayout(activity);
+        newTab.setTag("new-tab");
+        newTab.setOrientation(LinearLayout.HORIZONTAL);
+        newTab.setGravity(Gravity.CENTER);
+        newTab.setPadding(dp(12), 0, dp(14), 0);
+        newTab.setMinimumHeight(dp(40));
+        newTab.setBackground(fill(999, SlothTheme.accent(), 0));
+        newTab.setContentDescription("New tab");
+        newTab.setClickable(true);
+        newTab.setFocusable(true);
+        newTab.addView(SlothIcons.decorative(activity, SlothIcons.Kind.PLUS, 14,
+                SlothTheme.accentInk()), new LinearLayout.LayoutParams(dp(14), dp(14)));
+        TextView word = text("New tab", 13f, SlothTheme.accentInk(), true);
+        word.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);
+        LinearLayout.LayoutParams wordLp = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        wordLp.leftMargin = dp(6);
+        newTab.addView(word, wordLp);
+        newTab.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                tap("btnPlus");
+                picked();
+            }
+        });
+        header.addView(newTab, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT, dp(40)));
+        return header;
+    }
+
     private View tabFilter() {
         tabFilter = new EditText(activity);
+        tabFilter.setTag("tab-filter");
         tabFilter.setSingleLine(true);
-        tabFilter.setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f);
-        tabFilter.setTextColor(INK);
-        tabFilter.setHintTextColor(DIM);
+        tabFilter.setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f);
+        tabFilter.setTextColor(SlothTheme.ink());
+        tabFilter.setHintTextColor(SlothTheme.dim());
         tabFilter.setHint("Find a tab");
         tabFilter.setContentDescription("Find a tab");
-        tabFilter.setBackground(outline(14, CARD, SlothTheme.hairline(0x33)));
-        tabFilter.setPadding(dp(12), dp(8), dp(12), dp(8));
+        tabFilter.setBackground(fill(14, SlothTheme.field(), SlothTheme.hairline(0x33)));
+        tabFilter.setPadding(dp(14), dp(10), dp(14), dp(10));
         tabFilter.setVisibility(View.GONE);
         tabFilter.addTextChangedListener(new android.text.TextWatcher() {
             public void beforeTextChanged(CharSequence s, int a, int b, int c) {
@@ -347,386 +313,223 @@ final class SlothBoard {
             public void afterTextChanged(android.text.Editable s) {
             }
         });
-        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
-        lp.bottomMargin = dp(8);
+        LinearLayout.LayoutParams lp = full();
+        lp.bottomMargin = dp(10);
         tabFilter.setLayoutParams(lp);
         return tabFilter;
     }
 
     private void applyFilter(String query) {
         String needle = query == null ? "" : query.trim().toLowerCase(Locale.UK);
-        for (int i = 0; i < tabRow.getChildCount(); i++) {
-            View card = tabRow.getChildAt(i);
-            CharSequence label = cardLabel(card);
-            boolean match = needle.length() == 0
-                    || (label != null && label.toString().toLowerCase(Locale.UK).contains(needle));
+        for (int i = 0; i < tabGrid.getChildCount(); i++) {
+            View card = tabGrid.getChildAt(i);
+            Object title = card.getTag(R_TITLE);
+            boolean match = needle.length() == 0 || (title != null
+                    && title.toString().toLowerCase(Locale.UK).contains(needle));
             card.setVisibility(match ? View.VISIBLE : View.GONE);
         }
     }
 
-    /** The mock's "Tabs" section header, with the browser's own add-tab control at right. */
-    private View tabHeader() {
-        LinearLayout header = new LinearLayout(activity);
-        header.setOrientation(LinearLayout.HORIZONTAL);
-        header.setGravity(Gravity.CENTER_VERTICAL);
-        header.setPadding(0, dp(10), 0, 0);
-
-        TextView title = text("Tabs", 12f, DIM, true);
-        title.setLetterSpacing(0.14f);
-        header.addView(title, new LinearLayout.LayoutParams(0,
-                ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
-
-        final TextView plus = text("+", 18f, INK, true);
-        plus.setGravity(Gravity.CENTER);
-        plus.setBackground(outline(999, CARD, SlothTheme.hairline(0x33)));
-        plus.setContentDescription("New tab");
-        plus.setClickable(true);
-        plus.setFocusable(true);
-        plus.setOnClickListener(new View.OnClickListener() {
-            @Override
-            public void onClick(View v) {
-                tap("btnPlus");
-                if (onPick != null) {
-                    onPick.run();
-                }
-            }
-        });
-        header.addView(plus, new LinearLayout.LayoutParams(dp(34), dp(30)));
-        return header;
-    }
-
-    private View tabStrip() {
-        tabRow = new LinearLayout(activity);
-        tabRow.setTag("tab-row");
-        tabRow.setOrientation(LinearLayout.HORIZONTAL);
-        tabRow.setPadding(0, dp(4), 0, dp(8));
-        return tabRow;
-    }
-
-    /** A row that fills the width, so its weighted children actually share it. */
-    private void addFull(ViewGroup parent, View child) {
-        parent.addView(child, new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
-    }
-
-    /** Row that starts the section after the tab cards; the peek ends just above it. */
-    private View afterTabs;
-
-
+    /* -------------------------------------------------------------- shortcuts */
     /**
-     * A height that shows the head and the whole tab row, so the smallest open drawer
-     * never cuts a card in half. Zero until the board has been laid out once.
+     * Eight labelled places, four across. Back and forward live here now that the bar is a
+     * search field first; they dim when the browser says there is nowhere to go.
      */
-    /** Measures once at a given width, so the row boundary is known before first paint. */
-    int measurePeek(int widthPx) {
-        try {
-            view().measure(View.MeasureSpec.makeMeasureSpec(widthPx, View.MeasureSpec.EXACTLY),
-                    View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED));
-        } catch (RuntimeException ignored) {
-        }
-        return peekHeight();
+    private View shortcuts() {
+        shortcutGrid = new SlothGrid(activity, 4, dp(8));
+        shortcutGrid.setTag("shortcuts");
+        backCell = shortcut(SlothIcons.Kind.BACK, "Back", "btnBack");
+        forwardCell = shortcut(SlothIcons.Kind.FORWARD, "Forward", "btnFwd");
+        shortcutGrid.addView(backCell);
+        shortcutGrid.addView(forwardCell);
+        shortcutGrid.addView(shortcut(SlothIcons.Kind.HOME, "Home", "btnHome"));
+        shortcutGrid.addView(shortcut(SlothIcons.Kind.BOOKMARK, "Bookmarks", "panel:bookmarks"));
+        shortcutGrid.addView(shortcut(SlothIcons.Kind.CLOCK, "History", "panel:history"));
+        shortcutGrid.addView(shortcut(SlothIcons.Kind.DOWNLOAD, "Downloads", "panel:downloads"));
+        shortcutGrid.addView(shortcut(SlothIcons.Kind.SEARCH, "Find", "find"));
+        shortcutGrid.addView(shortcut(SlothIcons.Kind.MENU, "Settings", "settings"));
+        return shortcutGrid;
     }
 
-    int peekHeight() {
-        if (afterTabs == null || afterTabs.getTop() <= 0) {
-            return 0;
-        }
-        return afterTabs.getTop() - dp(6);
-    }
-
-    private View actions() {
-        LinearLayout row = new LinearLayout(activity);
-        row.setOrientation(LinearLayout.HORIZONTAL);
-        row.setPadding(0, 0, 0, dp(12));
-
-        // the mock's four quick actions. Home is the app's own home; the other three
-        // are the app's own screens, opened the same way Settings is.
-        // drawn, not typed: a text glyph is another font's idea of these four shapes, and the
-        // rest of the shell stopped using them because they arrived as emoji on real phones
-        row.addView(action(SlothIcons.Kind.HOME, "Home", "btnHome", false));
-        row.addView(action(SlothIcons.Kind.BOOKMARK, "Bookmarks", "panel:bookmarks", false));
-        row.addView(action(SlothIcons.Kind.CLOCK, "History", "panel:history", false));
-        row.addView(action(SlothIcons.Kind.DOWNLOAD, "Downloads", "panel:downloads", false));
-        row.addView(action(SlothIcons.Kind.SEARCH, "Find", "find", false));
-        return row;
-    }
-
-    private View action(SlothIcons.Kind kind, String name, final String target, boolean primary) {
+    private View shortcut(SlothIcons.Kind kind, String name, final String target) {
         LinearLayout cell = new LinearLayout(activity);
         cell.setOrientation(LinearLayout.VERTICAL);
         cell.setGravity(Gravity.CENTER_HORIZONTAL);
-        cell.setPadding(dp(4), dp(12), dp(4), dp(10));
+        cell.setPadding(dp(2), dp(10), dp(2), dp(8));
+        cell.setTag("shortcut");
         cell.setContentDescription(name);
-        cell.setBackground(outline(18, primary ? SlothTheme.hairline(0x1A) : CARD, primary ? SlothTheme.lineAt(0x73) : SlothTheme.lineAt(0x1F)));
         cell.setClickable(true);
         cell.setFocusable(true);
-        cell.setMinimumHeight(dp(84));
+        cell.setMinimumHeight(dp(76));
+        cell.setBackground(tile(16));
         cell.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View v) {
                 tap(target);
-                // an action from the dashboard is the end of the errand too
-                if (onPick != null) {
-                    onPick.run();
-                }
+                picked();
             }
         });
 
-        android.widget.FrameLayout icon = new android.widget.FrameLayout(activity);
-        icon.setBackground(outline(12, primary ? ACCENT : SlothTheme.lineAt(0x12), 0));
-        SlothIcons drawn = SlothIcons.decorative(activity, kind, 19,
-                primary ? ACCENT_INK : INK);
-        android.widget.FrameLayout.LayoutParams ilp = new android.widget.FrameLayout.LayoutParams(
-                dp(19), dp(19));
-        ilp.gravity = Gravity.CENTER;
-        icon.addView(drawn, ilp);
-        cell.addView(icon, new LinearLayout.LayoutParams(dp(34), dp(34)));
+        FrameLayout disc = new FrameLayout(activity);
+        disc.setBackground(fill(12, SlothTheme.lineAt(0x1A), 0));
+        FrameLayout.LayoutParams iconLp = new FrameLayout.LayoutParams(dp(20), dp(20));
+        iconLp.gravity = Gravity.CENTER;
+        disc.addView(SlothIcons.decorative(activity, kind, 20, SlothTheme.ink()), iconLp);
+        cell.addView(disc, new LinearLayout.LayoutParams(dp(44), dp(44)));
 
-        // 12 sp, as shipped. A smaller size and an autosizing variant were both tried to stop
-        // "Downloads" ellipsising in five cells, and both left the row with no label in the
-        // render at all - the ellipsis is the least bad of the three, and the size that fits
-        // your phone is the one that already worked
-        TextView title = text(name, 12f, INK, true);
+        TextView title = text(name, 12f, SlothTheme.ink(), false);
         title.setGravity(Gravity.CENTER);
-        title.setSingleLine(true);
+        // maxLines, not singleLine: a single-line field with an ellipsis drew no text at all in
+        // the render, which is how the old shortcut row shipped with icons and no words
+        title.setMaxLines(1);
         title.setEllipsize(TextUtils.TruncateAt.END);
-        LinearLayout.LayoutParams tlp = new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
-        tlp.topMargin = dp(8);
-        cell.addView(title, tlp);
-
-        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(0,
-                ViewGroup.LayoutParams.WRAP_CONTENT, 1f);
-        lp.rightMargin = dp(8);
-        cell.setLayoutParams(lp);
+        title.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);
+        LinearLayout.LayoutParams titleLp = full();
+        titleLp.topMargin = dp(6);
+        cell.addView(title, titleLp);
         return cell;
     }
 
-    private View widgets() {
-        LinearLayout grid = new LinearLayout(activity);
-        grid.setOrientation(LinearLayout.VERTICAL);
-        grid.setTag("widget-grid");
-
-        LinearLayout first = row();
-        first.addView(widget("clock", card("Clock", clockCard())), weight());
-        first.addView(widget("calc", calculatorCard()), weight());
-        grid.addView(first);
-
-        View pad = calculatorPad();
-        // the pad is part of the calculator, not a neighbour of it: owned by the same kind, so
-        // switching the calculator off takes its keys with it
-        own("calc", pad);
-        grid.addView(pad);
-        grid.addView(widget("notes", wide("Notes", notesCard())));
-
-        // the mock's counters, with numbers that exist: how many tabs there are, and
-        // whether the note is holding anything
-        LinearLayout counters = row();
-        counters.addView(widget("tabs", card("Tabs", counterBody("0", "open", true))), weight());
-        counters.addView(widget("note", card("Note", counterBody("empty", "on this phone", false))), weight());
-        addFull(grid, counters);
-        // one pass, once the grid holds everything it is going to hold
-        applyWidgetVisibility();
-        return grid;
+    /**
+     * Dim a direction the browser has run out of history for. The app keeps its own back and
+     * forward buttons and knows when they are dead, so it is asked rather than guessed at.
+     */
+    void syncHistory(View appBack, View appForward) {
+        dimIfDead(backCell, appBack, "Back", "Back, no earlier page");
+        dimIfDead(forwardCell, appForward, "Forward", "Forward, no later page");
     }
 
-    // ------------------------------------------------------------------ calculator
-    private double calcValue;
-    private double calcStored;
-    private String calcOp = "";
-    private boolean calcFresh = true;
-    private TextView calcFace;
-    private LinearLayout calcPad;
-
-    private View counterBody(String value, String label, boolean tabs) {
-        LinearLayout body = new LinearLayout(activity);
-        body.setOrientation(LinearLayout.VERTICAL);
-        body.setGravity(Gravity.BOTTOM);
-        TextView big = text(value, 16f, INK, true);
-        if (tabs) {
-            tabsStat = big;
-        } else {
-            noteStat = big;
+    private static void dimIfDead(View cell, View appButton, String live, String dead) {
+        if (cell == null) {
+            return;
         }
-        body.addView(big);
-        body.addView(text(label, 11f, DIM, false));
-        return body;
+        boolean off = appButton != null && !appButton.isEnabled();
+        cell.setAlpha(off ? 0.38f : 1f);
+        cell.setContentDescription(off ? dead : live);
     }
 
-    private View calculatorCard() {
-        LinearLayout body = new LinearLayout(activity);
-        body.setOrientation(LinearLayout.VERTICAL);
-        calcFace = text("0", 22f, INK, true);
-        calcFace.setSingleLine(true);
-        calcFace.setEllipsize(TextUtils.TruncateAt.START);
-        body.addView(calcFace);
-        TextView hint = text("Tap to open", 11f, DIM, false);
-        body.addView(hint);
+    /* ---------------------------------------------------------------- widgets */
+    /** The widgets fold away: tabs and places come first, and the shelf waits to be asked. */
+    private View widgetHeader() {
+        LinearLayout header = new LinearLayout(activity);
+        header.setOrientation(LinearLayout.HORIZONTAL);
+        header.setGravity(Gravity.CENTER_VERTICAL);
+        header.setPadding(0, dp(14), 0, dp(6));
 
-        LinearLayout cardRoot = (LinearLayout) card("Calc", body);
-        cardRoot.setClickable(true);
-        cardRoot.setOnClickListener(new View.OnClickListener() {
+        LinearLayout toggle = new LinearLayout(activity);
+        toggle.setTag("widgets-toggle");
+        toggle.setOrientation(LinearLayout.HORIZONTAL);
+        toggle.setGravity(Gravity.CENTER_VERTICAL);
+        toggle.setMinimumHeight(dp(44));
+        toggle.setClickable(true);
+        toggle.setFocusable(true);
+        toggle.addView(text("Widgets", 15f, SlothTheme.ink(), true));
+        widgetChevron = SlothIcons.decorative(activity, SlothIcons.Kind.FORWARD, 14,
+                SlothTheme.dim());
+        LinearLayout.LayoutParams chevronLp = new LinearLayout.LayoutParams(dp(14), dp(14));
+        chevronLp.leftMargin = dp(8);
+        toggle.addView(widgetChevron, chevronLp);
+        toggle.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View v) {
-                if (calcPad == null) {
-                    return;
-                }
-                boolean showing = calcPad.getVisibility() == View.VISIBLE;
-                calcPad.setVisibility(showing ? View.GONE : View.VISIBLE);
+                setWidgetsOpen(!widgetsOpen);
             }
         });
-        return cardRoot;
-    }
+        header.addView(toggle, new LinearLayout.LayoutParams(0,
+                ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
 
-    private View calculatorPad() {
-        calcPad = new LinearLayout(activity);
-        calcPad.setTag("calc-pad");
-        calcPad.setOrientation(LinearLayout.VERTICAL);
-        calcPad.setVisibility(View.GONE);
-        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
-        lp.bottomMargin = dp(8);
-        calcPad.setLayoutParams(lp);
-
-        String[][] keys = {
-                {"C", "\u00F7", "\u00D7", "\u2212"},
-                {"7", "8", "9", "+"},
-                {"4", "5", "6", "="},
-                {"1", "2", "3", "."},
-                {"0", "", "", ""}
-        };
-        for (String[] rowKeys : keys) {
-            LinearLayout row = new LinearLayout(activity);
-            row.setOrientation(LinearLayout.HORIZONTAL);
-            for (final String key : rowKeys) {
-                if (key.length() == 0) {
-                    View spacer = new View(activity);
-                    row.addView(spacer, new LinearLayout.LayoutParams(0, dp(44), 1f));
-                    continue;
+        editButton = text("Edit", 13f, SlothTheme.accent(), true);
+        editButton.setTag("edit-widgets");
+        editButton.setGravity(Gravity.CENTER);
+        editButton.setPadding(dp(16), 0, dp(16), 0);
+        editButton.setMinHeight(dp(40));
+        editButton.setBackground(press(999));
+        editButton.setContentDescription("Edit widgets");
+        editButton.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                if (onEditWidgets != null) {
+                    onEditWidgets.run();
                 }
-                TextView k = text(key, 16f, INK, true);
-                k.setGravity(Gravity.CENTER);
-                k.setBackground(outline(12, CARD, SlothTheme.hairline(0x33)));
-                k.setContentDescription("Calculator " + key);
-                k.setLayoutParams(new LinearLayout.LayoutParams(0, dp(44), 1f));
-                k.setOnClickListener(new View.OnClickListener() {
-                    @Override
-                    public void onClick(View v) {
-                        calcKey(key);
-                    }
-                });
-                row.addView(k);
             }
-            LinearLayout.LayoutParams rlp = new LinearLayout.LayoutParams(
-                    ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
-            rlp.bottomMargin = dp(6);
-            row.setLayoutParams(rlp);
-            calcPad.addView(row);
-        }
-        return calcPad;
+        });
+        header.addView(editButton, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT, dp(40)));
+        widgetHeader = toggle;
+        return header;
     }
 
-    private void calcKey(String key) {
-        if ("C".equals(key)) {
-            calcValue = 0;
-            calcStored = 0;
-            calcOp = "";
-            calcFresh = true;
-            show("0");
-            return;
-        }
-        if ("=".equals(key)) {
-            calcStored = apply(calcStored, calcValue, calcOp);
-            calcValue = calcStored;
-            calcOp = "";
-            calcFresh = true;
-            show(fmt(calcStored));
-            return;
-        }
-        if ("+".equals(key) || "\u2212".equals(key) || "\u00D7".equals(key) || "\u00F7".equals(key)) {
-            calcStored = apply(calcStored, calcValue, calcOp);
-            calcValue = calcStored;
-            calcOp = key;
-            calcFresh = true;
-            show(fmt(calcStored));
-            return;
-        }
-        if (".".equals(key)) {
-            if (calcFresh) {
-                calcValue = 0;
-                calcFresh = false;
-                show("0.");
-                return;
-            }
-            String current = fmt(calcValue);
-            if (!current.contains(".")) {
-                show(current + ".");
-            }
-            return;
-        }
-        // digit
-        if (calcFresh) {
-            calcValue = Double.parseDouble(key);
-            calcFresh = false;
-        } else {
-            String current = fmt(calcValue);
-            if ("0".equals(current)) {
-                current = "";
-            }
-            if (current.contains(".") && current.length() - current.indexOf('.') > 2) {
-                return;
-            }
-            calcValue = Double.parseDouble(current + key);
-        }
-        show(fmt(calcValue));
+    boolean widgetsOpen() {
+        return widgetsOpen;
     }
 
-    private double apply(double a, double b, String op) {
-        if ("+".equals(op)) {
-            return a + b;
+    void setWidgetsOpen(boolean open) {
+        widgetsOpen = open;
+        try {
+            activity.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+                    .edit().putBoolean("widgetsOpen", open).apply();
+        } catch (Throwable ignored) {
+            // the shelf still opens; it just will not remember
         }
-        if ("\u2212".equals(op)) {
-            return a - b;
-        }
-        if ("\u00D7".equals(op)) {
-            return a * b;
-        }
-        if ("\u00F7".equals(op)) {
-            return b == 0 ? 0 : a / b;
-        }
-        return b;
-    }
-
-    private void show(String value) {
-        if (calcFace != null) {
-            calcFace.setText(value);
-            calcFace.setContentDescription("Calculator shows " + value);
+        applyWidgetsOpen();
+        if (onResize != null) {
+            onResize.run();
         }
     }
 
-    private static String fmt(double value) {
-        if (value == Math.rint(value) && Math.abs(value) < 1e15) {
-            return String.valueOf((long) value);
+    private void applyWidgetsOpen() {
+        if (widgetBody != null) {
+            widgetBody.setVisibility(widgetsOpen ? View.VISIBLE : View.GONE);
         }
-        String s = String.valueOf(Math.round(value * 10000d) / 10000d);
-        return s;
+        if (editButton != null) {
+            editButton.setVisibility(widgetsOpen ? View.VISIBLE : View.GONE);
+        }
+        if (widgetChevron != null) {
+            widgetChevron.setRotation(widgetsOpen ? 90f : 0f);
+        }
+        if (widgetHeader != null) {
+            widgetHeader.setContentDescription(widgetsOpen
+                    ? "Widgets, shown. Tap to fold away"
+                    : "Widgets, folded away. Tap to show");
+        }
     }
 
-    /**
-     * Register a widget tile and give it the one control edit mode actually owns:
-     * Hide / Show. Reordering was advertised and never built, so it is not claimed here.
-     */
-    private LinearLayout widget(String kind, View view) {
-        LinearLayout tile = (LinearLayout) view;
+    private View widgets() {
+        widgetBody = new LinearLayout(activity);
+        widgetBody.setOrientation(LinearLayout.VERTICAL);
+        widgetBody.setTag("widget-grid");
+
+        SlothGrid first = new SlothGrid(activity, 2, dp(10));
+        first.addView(widget("clock", card("Clock", clockBody(), false)));
+        first.addView(widget("calc", calculatorCard()));
+        widgetBody.addView(first, spaced());
+
+        View pad = calculatorPad();
+        own("calc", pad);
+        widgetBody.addView(pad);
+        View notes = widget("notes", card("Notes", notesBody(), false));
+        widgetBody.addView(notes, spaced());
+
+        SlothGrid counters = new SlothGrid(activity, 2, dp(10));
+        counters.addView(widget("tabs", card("Tabs", counterBody(true), false)));
+        counters.addView(widget("note", card("Note", counterBody(false), false)));
+        widgetBody.addView(counters, spaced());
+        applyWidgetVisibility();
+        return widgetBody;
+    }
+
+    private LinearLayout.LayoutParams spaced() {
+        LinearLayout.LayoutParams lp = full();
+        lp.bottomMargin = dp(10);
+        return lp;
+    }
+
+    private View widget(String kind, View tile) {
         widgetTiles.put(kind, tile);
         own(kind, tile);
-        // visibility is applied once, at the end of widgets(): five partial passes per build was
-        // the same work done five times, each on a half-built grid
         return tile;
     }
 
-    /** Register a view that belongs to the same widget as the tile, like the calculator's pad. */
     private void own(String kind, View view) {
         java.util.ArrayList<View> views = widgetViews.get(kind);
         if (views == null) {
@@ -738,313 +541,21 @@ final class SlothBoard {
         }
     }
 
-    private void persistWidgets() {
-        try {
-            activity.getSharedPreferences("slothworks", Context.MODE_PRIVATE)
-                    // committed, not applied: which widgets the owner put away is a choice,
-                    // and a choice lost to a process kill is a choice they have to make twice
-                    .edit().putStringSet("hiddenWidgets",
-                            new java.util.LinkedHashSet<>(hiddenWidgets)).commit();
-        } catch (Throwable ignored) {
-        }
-    }
-
-    /** A widget the chooser has switched off is gone; the drawer rebuilds around it. */
+    /** A widget the chooser switched off is gone, and everything it owns goes with it. */
     void applyWidgetVisibility() {
         for (java.util.Map.Entry<String, java.util.ArrayList<View>> entry : widgetViews.entrySet()) {
             boolean hidden = hiddenWidgets.contains(entry.getKey());
             for (View view : entry.getValue()) {
-                // the tile may also be switched off by its own detail toggling, so only the
-                // hidden case is forced here and only the tile is restored
                 if (hidden) {
                     view.setVisibility(View.GONE);
                     hiddenByUs.add(view);
                 } else if (view == widgetTiles.get(entry.getKey()) || hiddenByUs.remove(view)) {
-                    // the tile always comes back; anything else only if this class hid it, so a
-                    // pad the person closed stays closed
+                    // the tile always comes back; a keypad only if this class hid it
                     view.setVisibility(View.VISIBLE);
                 }
             }
         }
     }
-
-    private LinearLayout row() {
-        LinearLayout row = new LinearLayout(activity);
-        row.setOrientation(LinearLayout.HORIZONTAL);
-        // height 0 with a weight only works when the parent has an exact height. This row sits
-        // in a wrap-content column, so the weight bought nothing and the row measured zero tall -
-        // the tiles were laid out inside a zero-height box
-        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
-        lp.bottomMargin = dp(8);
-        row.setLayoutParams(lp);
-        return row;
-    }
-
-    private LinearLayout.LayoutParams weight() {
-        // width is shared; height must be the tile's own, because the row it sits in wraps
-        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(0,
-                ViewGroup.LayoutParams.WRAP_CONTENT, 1f);
-        lp.rightMargin = dp(8);
-        return lp;
-    }
-
-    /** A tile: label, chevron, body. Consistent affordance across every card. */
-    private View card(String name, View body) {
-        LinearLayout tile = new LinearLayout(activity);
-        tile.setOrientation(LinearLayout.VERTICAL);
-        tile.setPadding(dp(14), dp(12), dp(14), dp(12));
-        tile.setBackground(outline(SlothTheme.radius(), CARD, SlothTheme.hairline(0x33)));
-        tile.setContentDescription(name);
-        // only a tile that does something may claim to be clickable: TalkBack reads
-        // setClickable(true) as "this responds", and the Clock card did not
-        tile.setClickable(false);
-        tile.setFocusable(false);
-
-        LinearLayout top = new LinearLayout(activity);
-        top.setOrientation(LinearLayout.HORIZONTAL);
-        top.setGravity(Gravity.CENTER_VERTICAL);
-        TextView label = text(name.toUpperCase(Locale.UK), 12f, DIM, true);
-        label.setLetterSpacing(0.14f);
-        top.addView(label, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
-        top.addView(text("\u203A", 15f, DIM, false));
-        tile.addView(top);
-
-        // the tile wraps its content, so a weighted body has no height to share and measures zero
-        tile.addView(body, new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
-        return tile;
-    }
-
-    private View wide(String name, View body) {
-        LinearLayout tile = (LinearLayout) card(name, body);
-        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
-        lp.bottomMargin = dp(8);
-        tile.setLayoutParams(lp);
-        return tile;
-    }
-
-    /* ---------------------------------------------------------------- content */
-    private View clockCard() {
-        LinearLayout body = new LinearLayout(activity);
-        body.setOrientation(LinearLayout.VERTICAL);
-        body.setGravity(Gravity.BOTTOM);
-
-        clock = text(new SimpleDateFormat("HH:mm", Locale.getDefault()).format(new Date()), 28f, INK, true);
-        body.addView(clock);
-        TextView date = text(new SimpleDateFormat("EEEE d MMMM", Locale.getDefault()).format(new Date()),
-                12f, DIM, false);
-        body.addView(date);
-
-        SlothShell.every(30000, new Runnable() {
-            @Override
-            public void run() {
-                if (clock != null) {
-                    clock.setText(new SimpleDateFormat("HH:mm", Locale.getDefault()).format(new Date()));
-                }
-            }
-        });
-        return body;
-    }
-
-    private View notesCard() {
-        LinearLayout body = new LinearLayout(activity);
-        body.setOrientation(LinearLayout.VERTICAL);
-
-        final EditText note = new EditText(activity);
-        note.setBackground(null);
-        note.setTextColor(INK);
-        note.setTextSize(TypedValue.COMPLEX_UNIT_SP, 13.5f);
-        note.setGravity(Gravity.TOP);
-        note.setPadding(0, dp(6), 0, 0);
-        note.setMinLines(2);
-        note.setHintTextColor(DIM);
-        note.setHint("Write something. It stays on the phone.");
-        note.setContentDescription("Notes");
-        // an EditText asks its ancestors not to intercept while it handles a gesture.
-        // That would make the note a dead zone for both scrolling and closing, so the
-        // request is withdrawn on touch-down: taps still land, drags still move the drawer.
-        note.setOnTouchListener(new View.OnTouchListener() {
-            @Override
-            public boolean onTouch(View v, android.view.MotionEvent event) {
-                if (event.getActionMasked() == android.view.MotionEvent.ACTION_DOWN) {
-                    android.view.ViewParent parent = v.getParent();
-                    while (parent != null) {
-                        parent.requestDisallowInterceptTouchEvent(false);
-                        parent = parent.getParent();
-                    }
-                }
-                return false;
-            }
-        });
-        try {
-            note.setText(activity.getSharedPreferences("slothworks", Context.MODE_PRIVATE)
-                    .getString("note", ""));
-        } catch (Throwable ignored) {
-        }
-        note.addTextChangedListener(new android.text.TextWatcher() {
-            public void beforeTextChanged(CharSequence s, int a, int b, int c) {
-            }
-
-            public void onTextChanged(CharSequence s, int a, int b, int c) {
-                try {
-                    activity.getSharedPreferences("slothworks", Context.MODE_PRIVATE)
-                            .edit().putString("note", s.toString()).apply();
-                } catch (Throwable ignored) {
-                }
-                // the card said "empty" over a full note: the counter was written once, at build
-                if (noteStat != null) {
-                    noteStat.setText(s.length() == 0 ? "empty" : s.length() + " chars");
-                }
-            }
-
-            public void afterTextChanged(android.text.Editable s) {
-            }
-        });
-        note.setMinHeight(dp(76));
-        body.addView(note, new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
-
-        LinearLayout meta = new LinearLayout(activity);
-        meta.setOrientation(LinearLayout.HORIZONTAL);
-        meta.setGravity(Gravity.CENTER_VERTICAL);
-        meta.addView(text("Saved on this phone", 11.5f, DIM, false),
-                new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
-
-        TextView newNote = text("+ New note", 12f, ACCENT, true);
-        newNote.setContentDescription("New note");
-        newNote.setPadding(dp(13), dp(7), dp(13), dp(7));
-        newNote.setBackground(outline(99, 0, SlothTheme.hairline(0x33)));
-        newNote.setOnClickListener(new View.OnClickListener() {
-            @Override
-            public void onClick(View v) {
-                note.setText("");
-            }
-        });
-        meta.addView(newNote);
-        body.addView(meta);
-        return body;
-    }
-
-    /* ------------------------------------------------------------------ input */
-    private View label(String value, boolean withEdit) {
-        LinearLayout row = new LinearLayout(activity);
-        row.setOrientation(LinearLayout.HORIZONTAL);
-        row.setGravity(Gravity.CENTER_VERTICAL);
-        row.setPadding(0, dp(4), 0, dp(8));
-
-        TextView t = text(value, 12f, SlothTheme.muted(), true);
-        t.setLetterSpacing(0.16f);
-        row.addView(t, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
-
-        if (withEdit) {
-            editButton = text("Edit widgets", 13f, ACCENT, true);
-            editButton.setContentDescription("Edit widgets");
-            editButton.setContentDescription("Edit widgets");
-            editButton.setGravity(Gravity.CENTER);
-            editButton.setPadding(dp(16), 0, dp(16), 0);
-            editButton.setMinHeight(dp(40));
-            editButton.setBackground(outline(999, 0, SlothTheme.hairline(0x33)));
-            editButton.setContentDescription("Edit widgets");
-            editButton.setOnClickListener(new View.OnClickListener() {
-                @Override
-                public void onClick(View v) {
-                    if (onEditWidgets != null) {
-                        onEditWidgets.run();
-                    }
-                }
-            });
-            row.addView(editButton, new LinearLayout.LayoutParams(
-                    ViewGroup.LayoutParams.WRAP_CONTENT, dp(40)));
-        }
-        return row;
-    }
-
-    /** Pocket height shows tabs and actions; the shelf belongs to the taller state. */
-    /** Tabs and notes are the two numbers the shell can honestly know. */
-    void onTabCount(int count) {
-        if (tabsStat != null) {
-            tabsStat.setText(count == 1 ? "1 tab" : count + " tabs");
-        }
-    }
-
-    /**
-     * Bring the drawer's cards in one after another.
-     *
-     * <p>A sheet that appears all at once reads as a screenshot; the same sheet arriving in
-     * a short sequence reads as something that opened. Each card starts a little low and
-     * clear of its colour, then settles - and the whole thing is a handful of frames, not
-     * an animation system.</p>
-     */
-    void reveal() {
-        final ViewGroup body = root;
-        if (body == null || body.getChildCount() == 0) {
-            return;
-        }
-        final int count = body.getChildCount();
-        final int rise = dp(body.getContext(), 10);
-        for (int i = 0; i < count; i++) {
-            View child = body.getChildAt(i);
-            child.setAlpha(0f);
-            child.setTranslationY(rise);
-        }
-        final int[] frame = {0};
-        final int frames = count + 7;
-        // a close or a rebuild cancels the entrance; the cards must be left *in*, not
-        // abandoned half-transparent behind a sheet that is already gone
-        final int started = SlothShell.generation();
-        Runnable tick = new Runnable() {
-            @Override
-            public void run() {
-                if (SlothShell.generation() != started) {
-                    settleNow();
-                    return;
-                }
-                frame[0]++;
-                for (int i = 0; i < count; i++) {
-                    View child = body.getChildAt(i);
-                    float t = Math.max(0f, Math.min(1f, (frame[0] - i) / 7f));
-                    child.setAlpha(t);
-                    child.setTranslationY(rise * (1f - t));
-                }
-                if (frame[0] < frames) {
-                    SlothShell.postDelayed(this, 16);
-                } else {
-                    // the last frame states the finished values rather than approaching them
-                    settleNow();
-                }
-            }
-        };
-        SlothShell.post(tick);
-    }
-
-    /** Leave every card fully arrived: the only honest end for an entrance. */
-    private void settleNow() {
-        if (root == null) {
-            return;
-        }
-        for (int i = 0; i < root.getChildCount(); i++) {
-            root.getChildAt(i).setAlpha(1f);
-            root.getChildAt(i).setTranslationY(0f);
-        }
-    }
-
-    private static int dp(android.content.Context context, int value) {
-        return Math.round(value * context.getResources().getDisplayMetrics().density);
-    }
-
-    void setCompact(boolean compact) {
-        if (shelf != null) {
-            shelf.setVisibility(compact ? View.GONE : View.VISIBLE);
-        }
-        if (shelfLabel != null) {
-            shelfLabel.setVisibility(compact ? View.GONE : View.VISIBLE);
-        }
-    }
-
-    /** The widgets the drawer can show, in the order the boards present them. */
-    static final String[] KINDS = {"clock", "calc", "notes", "tabs", "note"};
 
     static String kindLabel(String kind) {
         if ("clock".equals(kind)) {
@@ -1066,165 +577,423 @@ final class SlothBoard {
         return hiddenWidgets.contains(kind);
     }
 
-    /** Flip one widget on or off and remember it; the shell rebuilds to show the result. */
     void toggleWidget(String kind) {
         if (!hiddenWidgets.remove(kind)) {
             hiddenWidgets.add(kind);
         }
-        persistWidgets();
+        try {
+            // committed, not applied: a choice lost to a process kill is one made twice
+            activity.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
+                    .putStringSet("hiddenWidgets", new java.util.LinkedHashSet<>(hiddenWidgets))
+                    .commit();
+        } catch (Throwable ignored) {
+            // shown or hidden for this session at least
+        }
         applyWidgetVisibility();
     }
 
-    /** Where "Edit widgets" leads: the shell's chooser, the one place widgets change. */
-    private Runnable onEditWidgets;
-
-    void setEditSink(Runnable sink) {
-        onEditWidgets = sink;
+    /** A tile: a small capital label over its body. Only a tile that does something is clickable. */
+    private LinearLayout card(String name, View body, boolean clickable) {
+        LinearLayout tile = new LinearLayout(activity);
+        tile.setOrientation(LinearLayout.VERTICAL);
+        tile.setPadding(dp(14), dp(12), dp(14), dp(12));
+        tile.setBackground(fill(SlothTheme.radius(), SlothTheme.card(), SlothTheme.hairline(0x33)));
+        tile.setContentDescription(name);
+        tile.setClickable(clickable);
+        tile.setFocusable(clickable);
+        TextView label = text(name.toUpperCase(Locale.UK), 11f, SlothTheme.dim(), true);
+        label.setLetterSpacing(0.12f);
+        tile.addView(label);
+        tile.addView(body, full());
+        return tile;
     }
 
+    private View clockBody() {
+        LinearLayout body = new LinearLayout(activity);
+        body.setOrientation(LinearLayout.VERTICAL);
+        clock = text(now("HH:mm"), 28f, SlothTheme.ink(), true);
+        body.addView(clock);
+        body.addView(text(now("EEEE d MMMM"), 12f, SlothTheme.dim(), false));
+        SlothShell.every(30000, new Runnable() {
+            @Override
+            public void run() {
+                if (clock != null) {
+                    clock.setText(now("HH:mm"));
+                }
+            }
+        });
+        return body;
+    }
 
+    private static String now(String pattern) {
+        return new SimpleDateFormat(pattern, Locale.getDefault()).format(new Date());
+    }
 
+    private View counterBody(boolean tabs) {
+        LinearLayout body = new LinearLayout(activity);
+        body.setOrientation(LinearLayout.VERTICAL);
+        TextView big = text(tabs ? "0 tabs" : "empty", 16f, SlothTheme.ink(), true);
+        if (tabs) {
+            tabsStat = big;
+        } else {
+            noteStat = big;
+        }
+        body.addView(big);
+        body.addView(text(tabs ? "open" : "on this phone", 11f, SlothTheme.dim(), false));
+        return body;
+    }
 
-    /* ----------------------------------------------------------------- mirror */
-    /** Bring the tab strip in line with the browser's own chips. */
-    void mirror(Activity activity) {
-        View tabs = SlothShell.resolveStrip(activity);
-        if (!(tabs instanceof ViewGroup)) {
+    private View notesBody() {
+        LinearLayout body = new LinearLayout(activity);
+        body.setOrientation(LinearLayout.VERTICAL);
+        final EditText note = new EditText(activity);
+        note.setBackground(null);
+        note.setTextColor(SlothTheme.ink());
+        note.setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f);
+        note.setGravity(Gravity.TOP);
+        note.setPadding(0, dp(6), 0, 0);
+        note.setMinLines(2);
+        note.setMinHeight(dp(64));
+        note.setHintTextColor(SlothTheme.dim());
+        note.setHint("Write something. It stays on the phone.");
+        note.setContentDescription("Notes");
+        // an EditText asks its parents not to intercept; withdrawn on the down so a drag that
+        // starts on the note still moves the drawer, and a tap still edits
+        note.setOnTouchListener(new View.OnTouchListener() {
+            @Override
+            public boolean onTouch(View v, android.view.MotionEvent event) {
+                if (event.getActionMasked() == android.view.MotionEvent.ACTION_DOWN) {
+                    for (android.view.ViewParent p = v.getParent(); p != null; p = p.getParent()) {
+                        p.requestDisallowInterceptTouchEvent(false);
+                    }
+                }
+                return false;
+            }
+        });
+        try {
+            note.setText(activity.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+                    .getString("note", ""));
+        } catch (Throwable ignored) {
+            // an empty note
+        }
+        note.addTextChangedListener(new android.text.TextWatcher() {
+            public void beforeTextChanged(CharSequence s, int a, int b, int c) {
+            }
+
+            public void onTextChanged(CharSequence s, int a, int b, int c) {
+                try {
+                    activity.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+                            .edit().putString("note", s.toString()).apply();
+                } catch (Throwable ignored) {
+                    // the text stays on screen
+                }
+                if (noteStat != null) {
+                    noteStat.setText(s.length() == 0 ? "empty" : s.length() + " chars");
+                }
+            }
+
+            public void afterTextChanged(android.text.Editable s) {
+            }
+        });
+        body.addView(note, full());
+
+        LinearLayout meta = new LinearLayout(activity);
+        meta.setOrientation(LinearLayout.HORIZONTAL);
+        meta.setGravity(Gravity.CENTER_VERTICAL);
+        meta.addView(text("Saved on this phone", 11.5f, SlothTheme.dim(), false),
+                new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+        TextView clear = text("Clear", 13f, SlothTheme.accent(), true);
+        clear.setContentDescription("Clear the note");
+        clear.setGravity(Gravity.CENTER);
+        clear.setPadding(dp(14), 0, dp(14), 0);
+        clear.setMinHeight(dp(40));
+        clear.setBackground(press(999));
+        clear.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                note.setText("");
+            }
+        });
+        meta.addView(clear);
+        body.addView(meta);
+        if (noteStat != null) {
+            noteStat.setText(note.length() == 0 ? "empty" : note.length() + " chars");
+        }
+        return body;
+    }
+
+    void onTabCount(int count) {
+        if (tabsStat != null) {
+            tabsStat.setText(count == 1 ? "1 tab" : count + " tabs");
+        }
+        if (tabCountBadge != null) {
+            tabCountBadge.setText(String.valueOf(count));
+            tabCountBadge.setContentDescription(count == 1 ? "1 tab open" : count + " tabs open");
+        }
+    }
+
+    /* ------------------------------------------------------------- calculator */
+    private double calcValue;
+    private double calcStored;
+    private String calcOp = "";
+    private boolean calcFresh = true;
+    private TextView calcFace;
+    private LinearLayout calcPad;
+
+    private View calculatorCard() {
+        LinearLayout body = new LinearLayout(activity);
+        body.setOrientation(LinearLayout.VERTICAL);
+        calcFace = text("0", 24f, SlothTheme.ink(), true);
+        calcFace.setSingleLine(true);
+        calcFace.setEllipsize(TextUtils.TruncateAt.START);
+        body.addView(calcFace);
+        body.addView(text("Tap for keys", 12f, SlothTheme.dim(), false));
+        LinearLayout tile = card("Calc", body, true);
+        tile.setContentDescription("Calculator. Tap to show the keys");
+        tile.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                if (calcPad != null) {
+                    calcPad.setVisibility(calcPad.getVisibility() == View.VISIBLE
+                            ? View.GONE : View.VISIBLE);
+                }
+            }
+        });
+        return tile;
+    }
+
+    private View calculatorPad() {
+        calcPad = new LinearLayout(activity);
+        calcPad.setTag("calc-pad");
+        calcPad.setOrientation(LinearLayout.VERTICAL);
+        calcPad.setVisibility(View.GONE);
+        LinearLayout.LayoutParams lp = full();
+        lp.bottomMargin = dp(10);
+        calcPad.setLayoutParams(lp);
+        String[] keys = {"C", "÷", "×", "−", "7", "8", "9", "+",
+                "4", "5", "6", "=", "1", "2", "3", ".", "0"};
+        SlothGrid grid = new SlothGrid(activity, 4, dp(6));
+        for (final String key : keys) {
+            TextView k = text(key, 17f, SlothTheme.ink(), true);
+            k.setGravity(Gravity.CENTER);
+            k.setBackground(fill(12, SlothTheme.card(), SlothTheme.hairline(0x33)));
+            k.setContentDescription("Calculator " + key);
+            k.setLayoutParams(new ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(44)));
+            k.setOnClickListener(new View.OnClickListener() {
+                @Override
+                public void onClick(View v) {
+                    calcKey(key);
+                }
+            });
+            grid.addView(k);
+        }
+        calcPad.addView(grid, full());
+        return calcPad;
+    }
+
+    private void calcKey(String key) {
+        if ("C".equals(key)) {
+            calcValue = 0;
+            calcStored = 0;
+            calcOp = "";
+            calcFresh = true;
+            show("0");
             return;
         }
-        ViewGroup strip = (ViewGroup) tabs;
-        if (tabRow.getChildCount() == strip.getChildCount() && strip.getChildCount() > 0
+        if ("=".equals(key)) {
+            calcStored = apply(calcStored, calcValue, calcOp);
+            calcValue = calcStored;
+            calcOp = "";
+            calcFresh = true;
+            show(fmt(calcStored));
+            return;
+        }
+        if ("+".equals(key) || "−".equals(key) || "×".equals(key) || "÷".equals(key)) {
+            calcStored = apply(calcStored, calcValue, calcOp);
+            calcValue = calcStored;
+            calcOp = key;
+            calcFresh = true;
+            show(fmt(calcStored));
+            return;
+        }
+        if (".".equals(key)) {
+            if (calcFresh) {
+                calcValue = 0;
+                calcFresh = false;
+                show("0.");
+                return;
+            }
+            String current = fmt(calcValue);
+            if (!current.contains(".")) {
+                show(current + ".");
+            }
+            return;
+        }
+        if (calcFresh) {
+            calcValue = Double.parseDouble(key);
+            calcFresh = false;
+        } else {
+            String current = fmt(calcValue);
+            if ("0".equals(current)) {
+                current = "";
+            }
+            if (current.contains(".") && current.length() - current.indexOf('.') > 2) {
+                return;
+            }
+            calcValue = Double.parseDouble(current + key);
+        }
+        show(fmt(calcValue));
+    }
+
+    private static double apply(double a, double b, String op) {
+        if ("+".equals(op)) {
+            return a + b;
+        }
+        if ("−".equals(op)) {
+            return a - b;
+        }
+        if ("×".equals(op)) {
+            return a * b;
+        }
+        if ("÷".equals(op)) {
+            return b == 0 ? 0 : a / b;
+        }
+        return b;
+    }
+
+    private void show(String value) {
+        if (calcFace != null) {
+            calcFace.setText(value);
+            calcFace.setContentDescription("Calculator shows " + value);
+        }
+    }
+
+    private static String fmt(double value) {
+        if (value == Math.rint(value) && Math.abs(value) < 1e15) {
+            return String.valueOf((long) value);
+        }
+        return String.valueOf(Math.round(value * 10000d) / 10000d);
+    }
+
+    /* ------------------------------------------------------------------- tabs */
+    /** The tag a card's readable title is kept under, for the filter and the staleness check. */
+    static final int R_TITLE = 0x7F5100A1;
+
+    /**
+     * Bring the cards in line with the browser's own tab strip. An unchanged strip keeps
+     * its cards, so the 800 ms tick does not rebuild listeners and drawables for nothing.
+     */
+    void mirror(Activity activity) {
+        ViewGroup strip = SlothShell.resolveStrip(activity);
+        if (strip == null) {
+            return;
+        }
+        if (tabGrid.getChildCount() == strip.getChildCount() && strip.getChildCount() > 0
                 && !stale(strip)) {
             return;
         }
-        boolean many = strip.getChildCount() > FILTER_AT;
-        if (tabFilter != null) {
-            tabFilter.setVisibility(many ? View.VISIBLE : View.GONE);
-        }
-        tabRow.removeAllViews();
-        int active = -1;
+        tabFilter.setVisibility(strip.getChildCount() > FILTER_AT ? View.VISIBLE : View.GONE);
+        tabGrid.removeAllViews();
+        int active = activeIndex(strip);
         for (int i = 0; i < strip.getChildCount(); i++) {
-            View candidate = strip.getChildAt(i);
-            if (candidate.isSelected() || candidate.isActivated()) {
-                active = i;
-                break;
-            }
+            tabGrid.addView(tabCard(strip.getChildAt(i),
+                    readableTitle(SlothShell.label(strip.getChildAt(i)), i + 1), i == active));
         }
-        for (int i = 0; i < strip.getChildCount(); i++) {
-            final View chip = strip.getChildAt(i);
-            CharSequence title = readableTitle(SlothShell.label(chip), i + 1);
-            final boolean current = i == active;
-            // the mock's tab cards: a thumbnail with the page's initial, its title
-            // underneath, and its own close control - three across, like the concept
-            LinearLayout card = new LinearLayout(activity);
-            card.setOrientation(LinearLayout.VERTICAL);
-            card.setPadding(dp(8), dp(8), dp(8), dp(6));
-            card.setBackground(outline(16, current ? SlothTheme.lineAt(0x26) : CARD,
-                    current ? ACCENT : SlothTheme.hairline(0x33)));
-            if (current) {
-                // the tab you are on should be visible across the room, not by a hairline
-                ((android.graphics.drawable.GradientDrawable) card.getBackground())
-                        .setStroke(dp(2), ACCENT);
-            }
-            LinearLayout.LayoutParams cardLp = new LinearLayout.LayoutParams(0, dp(108), 1f);
-            cardLp.rightMargin = dp(8);
-            card.setLayoutParams(cardLp);
-
-            if (current) {
-                // the accent cap: the tab you are on reads instantly, whatever the palette
-                View cap = new View(activity);
-                GradientDrawable capBg = new GradientDrawable();
-                capBg.setCornerRadius(dp(2));
-                capBg.setColor(ACCENT);
-                cap.setBackground(capBg);
-                LinearLayout.LayoutParams capLp = new LinearLayout.LayoutParams(
-                        dp(18), dp(3));
-                capLp.bottomMargin = dp(6);
-                capLp.gravity = Gravity.CENTER_HORIZONTAL;
-                card.addView(cap, capLp);
-            }
-
-            LinearLayout thumb = new LinearLayout(activity);
-            thumb.setGravity(Gravity.CENTER);
-            thumb.setBackground(outline(12, SlothTheme.lineAt(0x14), 0));
-            TextView initial = text(String.valueOf(title.toString().trim().isEmpty()
-                    ? "?" : title.toString().trim().toUpperCase(Locale.UK).charAt(0)), 22f, DIM, true);
-            thumb.addView(initial);
-            card.addView(thumb, new LinearLayout.LayoutParams(
-                    ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f));
-
-            LinearLayout titleRow = new LinearLayout(activity);
-            titleRow.setOrientation(LinearLayout.HORIZONTAL);
-            titleRow.setGravity(Gravity.CENTER_VERTICAL);
-            titleRow.setPadding(0, dp(4), 0, 0);
-
-            TextView label = text(title.toString(), 11f, current ? INK : DIM, current);
-            label.setSingleLine(true);
-            label.setEllipsize(TextUtils.TruncateAt.END);
-            titleRow.addView(label, new LinearLayout.LayoutParams(0,
-                    ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
-
-            final View closeTarget = SlothShell.byTagDeep(chip, "close");
-            TextView close = text("\u00D7", 14f, DIM, false);
-            close.setGravity(Gravity.CENTER);
-            close.setContentDescription("Close " + title);
-            close.setLayoutParams(new LinearLayout.LayoutParams(dp(24), dp(24)));
-            close.setOnClickListener(new View.OnClickListener() {
-                @Override
-                public void onClick(View v) {
-                    if (closeTarget != null) {
-                        closeTarget.performClick();
-                    } else {
-                        chip.performClick();
-                    }
-                    mirrorNow();
-                }
-            });
-            titleRow.addView(close);
-            card.addView(titleRow);
-
-            card.setTag("tab-card");
-            card.setContentDescription(current
-                    ? title + ", current tab (switch to it)"
-                    : "Switch to " + title);
-            card.setClickable(true);
-            card.setFocusable(true);
-            card.setOnClickListener(new View.OnClickListener() {
-                @Override
-                public void onClick(View v) {
-                    chip.performClick();
-                    if (onPick != null) {
-                        onPick.run();
-                    }
-                }
-            });
-            tabRow.addView(card, cardLp);
-        }
-        if (tabFilter != null) {
-            applyFilter(tabFilter.getText().toString());
-        }
+        applyFilter(tabFilter.getText().toString());
     }
 
-    
-    
-    
-    
     void mirrorNow() {
-        tabRow.removeAllViews();
-        View tabs = SlothShell.resolveStrip(activity);
-        if (tabs instanceof ViewGroup) {
-            mirror(activity);
-        }
+        tabGrid.removeAllViews();
+        mirror(activity);
     }
 
-    /** A card's own text lives inside it; casting the card to TextView was the bug. */
-    /** The card's title. A card also holds the page's initial, so the longest text wins. */
+    static int activeIndex(ViewGroup strip) {
+        for (int i = 0; i < strip.getChildCount(); i++) {
+            View chip = strip.getChildAt(i);
+            if (chip.isSelected() || chip.isActivated()) {
+                return i;
+            }
+        }
+        return -1;
+    }
+
     /**
-     * The browser names an untitled tab with its accessibility description - "Tabs, 1" -
-     * and a loaded page with its title. Neither is what a card should say, so a bare
-     * number becomes "Tab 1" and the spoken prefix is dropped.
+     * One tab: its initial on a tinted disc, its title over two lines, and its own close.
+     * The tab you are on carries the accent edge and says "Current tab" in words.
      */
-    private static CharSequence readableTitle(CharSequence raw, int position) {
+    private View tabCard(final View chip, final CharSequence title, boolean current) {
+        LinearLayout card = new LinearLayout(activity);
+        card.setOrientation(LinearLayout.HORIZONTAL);
+        card.setGravity(Gravity.CENTER_VERTICAL);
+        card.setPadding(dp(10), dp(8), dp(4), dp(8));
+        card.setMinimumHeight(dp(64));
+        GradientDrawable bg = fill(SlothTheme.radius(),
+                current ? SlothTheme.lineAt(0x22) : SlothTheme.card(),
+                current ? SlothTheme.accent() : SlothTheme.hairline(0x33));
+        if (current) {
+            bg.setStroke(dp(2), SlothTheme.accent());
+        }
+        card.setBackground(bg);
+        card.setTag("tab-card");
+        card.setTag(R_TITLE, title.toString());
+        card.setClickable(true);
+        card.setFocusable(true);
+        card.setContentDescription(current ? title + ", current tab" : "Switch to " + title);
+        card.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                chip.performClick();
+                picked();
+            }
+        });
+
+        String trimmed = title.toString().trim();
+        TextView initial = text(trimmed.isEmpty() ? "?" : trimmed.substring(0, 1)
+                .toUpperCase(Locale.UK), 15f, current ? SlothTheme.accentInk() : SlothTheme.ink(), true);
+        initial.setGravity(Gravity.CENTER);
+        initial.setBackground(fill(12, current ? SlothTheme.accent() : SlothTheme.lineAt(0x1A), 0));
+        initial.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);
+        card.addView(initial, new LinearLayout.LayoutParams(dp(36), dp(36)));
+
+        LinearLayout words = new LinearLayout(activity);
+        words.setOrientation(LinearLayout.VERTICAL);
+        words.setPadding(dp(10), 0, dp(2), 0);
+        TextView name = text(trimmed, 13f, SlothTheme.ink(), true);
+        name.setMaxLines(2);
+        name.setEllipsize(TextUtils.TruncateAt.END);
+        name.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);
+        words.addView(name);
+        if (current) {
+            TextView here = text("Current tab", 11f, SlothTheme.accent(), true);
+            here.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);
+            words.addView(here);
+        }
+        card.addView(words, new LinearLayout.LayoutParams(0,
+                ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+
+        final View closeTarget = SlothShell.byTagDeep(chip, "close");
+        View close = roundButton(SlothIcons.Kind.CLOSE, "Close " + title, 12, 0);
+        close.setTag("tab-close");
+        close.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                if (closeTarget != null) {
+                    closeTarget.performClick();
+                } else {
+                    SlothLog.warn("this browser offers no close on a tab");
+                }
+                mirrorNow();
+            }
+        });
+        card.addView(close, new LinearLayout.LayoutParams(dp(40), dp(40)));
+        return card;
+    }
+
+    /**
+     * The browser names an untitled tab with its spoken description - "Tabs, 1". A card says
+     * "Tab 1" instead, and a loaded page keeps its own title.
+     */
+    static CharSequence readableTitle(CharSequence raw, int position) {
         String text = raw == null ? "" : raw.toString().trim();
         text = text.replaceFirst("(?i)^tabs?\\s*,\\s*", "").trim();
         if (text.isEmpty()) {
@@ -1236,130 +1005,121 @@ final class SlothBoard {
         return text;
     }
 
-    private static CharSequence cardLabel(View card) {
-        if (card instanceof TextView) {
-            return ((TextView) card).getText();
-        }
-        CharSequence best = null;
-        if (card instanceof ViewGroup) {
-            ViewGroup g = (ViewGroup) card;
-            for (int i = 0; i < g.getChildCount(); i++) {
-                CharSequence found = cardLabel(g.getChildAt(i));
-                if (found != null && found.length() > (best == null ? 0 : best.length())) {
-                    best = found;
-                }
-            }
-        }
-        return best;
-    }
-
     private boolean stale(ViewGroup strip) {
-        if (strip.getChildCount() != tabRow.getChildCount()) {
+        if (strip.getChildCount() != tabGrid.getChildCount()) {
             return true;
         }
+        int active = activeIndex(strip);
         for (int i = 0; i < strip.getChildCount(); i++) {
-            // the cards are built from readableTitle(), so comparing against the raw label
-            // never matched for an untitled tab ("Tabs, 1" vs "Tab 1") and every refresh tore
-            // down and rebuilt the whole row, listeners and drawables included
+            View card = tabGrid.getChildAt(i);
             CharSequence want = readableTitle(SlothShell.label(strip.getChildAt(i)), i + 1);
-            CharSequence have = cardLabel(tabRow.getChildAt(i));
-            if (want != null && want.length() > 0 && have != null
-                    && !want.toString().contentEquals(have)) {
+            if (!want.toString().equals(card.getTag(R_TITLE))) {
+                return true;
+            }
+            boolean markedCurrent = String.valueOf(card.getContentDescription()).endsWith(", current tab");
+            if (markedCurrent != (i == active)) {
                 return true;
             }
         }
         return false;
     }
 
-    /* ------------------------------------------------------------------ utils */
+    /* --------------------------------------------------------------- entrance */
     /**
-     * Open one of the app's own widgets by kind.
-     *
-     * SquareFace.press looks like the entry point and is not: it is the
-     * calculator's key handler, so press("calc") just feeds a key the calculator
-     * ignores. toggle(kind) is what expands a widget, and it needs the app's
-     * drawer to exist - so the panel is released first.
+     * Bring the sections in one after another: a sheet that arrives in a short sequence reads
+     * as something that opened. A close or a rebuild cancels it and leaves everything in.
      */
-    private void closeDrawer() {
-        try {
-            Class<?> face = Class.forName("com.sloth.browser.DrawerFace");
-            java.lang.reflect.Method m = face.getMethod("closeDrawer", Activity.class);
-            m.invoke(null, activity);
-        } catch (Throwable ignored) {
+    void reveal() {
+        final int count = root.getChildCount();
+        if (count == 0) {
+            return;
         }
+        final int rise = dp(10);
+        for (int i = 0; i < count; i++) {
+            root.getChildAt(i).setAlpha(0f);
+            root.getChildAt(i).setTranslationY(rise);
+        }
+        final int[] frame = {0};
+        final int frames = count + 7;
+        final int started = SlothShell.generation();
+        SlothShell.post(new Runnable() {
+            @Override
+            public void run() {
+                if (SlothShell.generation() != started) {
+                    settleNow();
+                    return;
+                }
+                frame[0]++;
+                for (int i = 0; i < count && i < root.getChildCount(); i++) {
+                    float t = Math.max(0f, Math.min(1f, (frame[0] - i) / 7f));
+                    root.getChildAt(i).setAlpha(t);
+                    root.getChildAt(i).setTranslationY(rise * (1f - t));
+                }
+                if (frame[0] < frames) {
+                    SlothShell.postDelayed(this, 16);
+                } else {
+                    settleNow();
+                }
+            }
+        });
+    }
+
+    void settleNow() {
+        for (int i = 0; i < root.getChildCount(); i++) {
+            root.getChildAt(i).setAlpha(1f);
+            root.getChildAt(i).setTranslationY(0f);
+        }
+    }
+
+    /* ------------------------------------------------------------------ utils */
+    private void picked() {
         if (onPick != null) {
             onPick.run();
         }
     }
 
-    /**
-     * There is no close-tab binding in this app: each tab chip carries its own close
-     * control, tagged "close". Closing the current tab means finding the active chip
-     * and pressing that control, the same path the tab cards use.
-     */
-    private void closeCurrentTab() {
-        View strip = SlothShell.resolveStrip(activity);
-        if (!(strip instanceof ViewGroup)) {
-            return;
-        }
-        ViewGroup tabs = (ViewGroup) strip;
-        View chip = null;
-        for (int i = 0; i < tabs.getChildCount(); i++) {
-            View candidate = tabs.getChildAt(i);
-            if (candidate.isSelected() || candidate.isActivated()) {
-                chip = candidate;
-                break;
-            }
-        }
-        if (chip == null && tabs.getChildCount() > 0) {
-            chip = tabs.getChildAt(tabs.getChildCount() - 1);
-        }
-        if (chip == null) {
-            return;
-        }
-        View closer = SlothShell.byTagDeep(chip, "close");
-        if (closer != null) {
-            closer.performClick();
-        }
-        mirrorNow();
+    private void closeDrawer() {
+        picked();
     }
 
-    private void tap(String bindingName) {
-        if ("find".equals(bindingName)) {
+    private void tap(String target) {
+        if ("find".equals(target)) {
             SlothShell.openFind(activity);
             return;
         }
-        if (bindingName != null && bindingName.startsWith("panel:")) {
-            String kind = bindingName.substring(6);
-            if ("bookmarks".equals(kind) || "history".equals(kind)
-                    || "downloads".equals(kind)) {
-                // these three are records the app or the engine can hand over; our page lists
-                // them itself instead of lending the panel and hoping it draws in time
-                SlothShell.openLibrary(activity, kind);
-                return;
-            }
-            SlothShell.openPanel(activity, kind);
-            return;
-        }
-        if ("close:current".equals(bindingName)) {
-            closeCurrentTab();
-            return;
-        }
-        // the app's menu and add-ons screens draw into its panel, which the shell now keeps
-        // shut - it was the empty box over the page. Menu is the dashboard; add-ons is the
-        // page that carries the engine's own switches.
-        if ("btnMenu".equals(bindingName)) {
-            SlothShell.openDrawer(activity);
-            return;
-        }
-        if ("btnExt".equals(bindingName)) {
+        if ("settings".equals(target)) {
             SlothShell.openSettingsPage(activity);
             return;
         }
-        View v = SlothShell.resolve(activity, bindingName);
+        if (target.startsWith("panel:")) {
+            String kind = target.substring(6);
+            if ("bookmarks".equals(kind) || "history".equals(kind) || "downloads".equals(kind)) {
+                // records the app or the engine hands over; our page lists them itself
+                SlothShell.openLibrary(activity, kind);
+            } else {
+                SlothShell.openPanel(activity, kind);
+            }
+            return;
+        }
+        View v = SlothShell.resolve(activity, target);
         if (v != null) {
             v.performClick();
+        } else {
+            SlothLog.warn("no " + target + " in this browser");
         }
+    }
+
+    /** A round control with a drawn icon: a 44 dp target, whatever the icon's size. */
+    private View roundButton(SlothIcons.Kind kind, String label, int iconDp, int fillColour) {
+        FrameLayout button = new FrameLayout(activity);
+        button.setContentDescription(label);
+        button.setClickable(true);
+        button.setFocusable(true);
+        button.setBackground(fillColour == 0 ? press(999) : fill(999, fillColour, 0));
+        FrameLayout.LayoutParams lp = new FrameLayout.LayoutParams(dp(iconDp), dp(iconDp));
+        lp.gravity = Gravity.CENTER;
+        button.addView(SlothIcons.decorative(activity, kind, iconDp, SlothTheme.dim()), lp);
+        return button;
     }
 
     private TextView text(String value, float size, int colour, boolean bold) {
@@ -1367,38 +1127,44 @@ final class SlothBoard {
         t.setText(value);
         t.setTextSize(TypedValue.COMPLEX_UNIT_SP, size);
         t.setTextColor(colour);
+        t.setIncludeFontPadding(false);
         if (bold) {
             t.setTypeface(t.getTypeface(), android.graphics.Typeface.BOLD);
         }
         return t;
     }
 
-    /**
-     * Cards are glass, not paint: a shallow gradient from a slightly lifted top edge
-     * down to the card colour, then a hairline. Cheap, and it reads as depth without
-     * a blur the platform cannot do below API 31.
-     */
-    private GradientDrawable outline(float radius, int fill, int stroke) {
-        if (fill == CARD) {
-            // translucent on the dark palettes so the forest shows through the glass
-            boolean clear = SlothTheme.frosted();
-            GradientDrawable glass = new GradientDrawable(
-                    GradientDrawable.Orientation.TOP_BOTTOM,
-                    new int[]{clear ? (0xF2 << 24 | (SlothTheme.cardTop() & 0xFFFFFF)) : SlothTheme.cardTop(),
-                            clear ? (0xEC << 24 | (CARD & 0xFFFFFF)) : CARD});
-            glass.setCornerRadius(dp((int) radius));
-            if (stroke != 0) {
-                glass.setStroke(Math.max(1, dp(1)), stroke);
-            }
-            return glass;
-        }
+    private GradientDrawable fill(float radiusDp, int colour, int stroke) {
         GradientDrawable d = new GradientDrawable();
-        d.setCornerRadius(dp((int) radius));
-        d.setColor(fill);
+        d.setCornerRadius(radiusDp * activity.getResources().getDisplayMetrics().density);
+        d.setColor(colour);
         if (stroke != 0) {
             d.setStroke(Math.max(1, dp(1)), stroke);
         }
         return d;
+    }
+
+    /**
+     * A tile you can press: the card colour at rest, so the painted scene behind the sheet never
+     * shows through a control, and a lifted fill under the finger.
+     */
+    private android.graphics.drawable.Drawable tile(int radiusDp) {
+        android.graphics.drawable.StateListDrawable states =
+                new android.graphics.drawable.StateListDrawable();
+        states.addState(new int[]{android.R.attr.state_pressed},
+                fill(radiusDp, SlothTheme.cardTop(), SlothTheme.hairline(0x55)));
+        states.addState(new int[]{}, fill(radiusDp, SlothTheme.card(), SlothTheme.hairline(0x33)));
+        return states;
+    }
+
+    /** A press state without a drawable resource: clear at rest, a soft fill under the finger. */
+    private android.graphics.drawable.Drawable press(int radiusDp) {
+        android.graphics.drawable.StateListDrawable states =
+                new android.graphics.drawable.StateListDrawable();
+        states.addState(new int[]{android.R.attr.state_pressed},
+                fill(radiusDp, SlothTheme.lineAt(0x22), 0));
+        states.addState(new int[]{}, fill(radiusDp, 0, 0));
+        return states;
     }
 
     private int dp(int value) {

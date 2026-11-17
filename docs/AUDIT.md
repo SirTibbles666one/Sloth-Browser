@@ -181,3 +181,39 @@ layer, and the build plumbing. Only the findings that were re-checked against th
 - **Fifty `catch` blocks swallow exceptions.** The two on the paths that matter now log. The
   rest are in places where a failure means "this optional decoration did not draw", and a log
   line there would be noise; that judgment would need a real crash to overturn.
+
+## The bar and the drawer, rebuilt
+
+The bar, the strip and the drawer's content were written again from scratch: `SlothTopBar`,
+`SlothStrip`, `SlothGrid` and a new `SlothBoard`. The shell keeps what connects them to the
+browser - insets, the page offset, the drag and its coalescing, the back order, the pages - and
+lost about 730 lines of the old builders.
+
+**What changed for the person holding the phone**
+
+- The bar has three controls instead of seven: the search field (reload inside it), the tab count
+  and the menu. Back and forward moved into the drawer's shortcuts.
+- Three resting heights instead of four: shut, the strip, the whole drawer. The "fitted" seat
+  between the strip and the top is gone.
+- The tab count toggles the strip; the menu toggles the whole drawer.
+- Tab cards are two across with room for a two-line title, and say "Current tab" in words.
+- The shortcuts are labelled - the old row had icons and no words in every render.
+- The widgets are folded away until asked for, and the drawer resizes when they unfold.
+- The footer's theme, Settings and Add widget chips are gone: the palette is in Settings, widgets
+  are edited from their own section.
+
+**Found while rebuilding, and fixed**
+
+- **The shortcut labels never drew.** `setSingleLine(true)` with an ellipsis rendered no text at all;
+  the old row shipped with icons only. Labels are `maxLines(1)` now.
+- **The whole drawer could open cut off.** Its height came from the board's last measure, which is
+  stale after the strip has hidden the list. The board is measured at the sheet's width whenever
+  the seat is needed, and the height includes the bottom handle band and the navigation bar.
+- **The painted scene showed through the shortcut tiles.** Controls are on the card colour now.
+
+**Open**
+
+- Still no on-device verification: how the new drag stops feel is unproven until it is on a phone.
+- `audit/shell_refs.py` was not run: it needs a built APK, and the base APK is not here. The new
+  classes reflect on nothing the old ones did not (`btnBack`, `btnFwd`, `btnReload`, `btnPlus`,
+  `btnHome`, `pageInfo`, `showSwitcher`, `go`).

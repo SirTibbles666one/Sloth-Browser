@@ -32,14 +32,26 @@ an existing copy; without it you can still compile and test, and you cannot prod
 
 ## The shape of the shell
 
-One surface carries the bar and the drawer. The bar is the handle — a vertical drag anywhere on it
-grows it into the sheet, with four resting sizes (shut, the 72 dp tab strip, the fitted content,
-the full sheet). A sideways flick across the bar changes tab. The strip holds close, one square
-per open tab, and a plus; holding a square closes that tab.
+One surface carries the bar and the drawer. The bar is the handle: a vertical drag anywhere on it
+grows it into the drawer, which rests at one of three heights - shut, the 64 dp strip of tabs, and
+the whole drawer fitted to what it holds. A sideways flick across the field changes tab.
 
-The sheet's content is a dashboard built in code: themed cards, a calculator, notes, a clock, the
-mirrored tab row, a widget chooser, live counters. Under it all, a layered painted forest that
-moves at different depths as the sheet comes out.
+**The bar** (`SlothTopBar`) is a search field first: the field takes the width, with the site's
+padlock or a magnifier at its start and reload at its end (clear replaces reload while you type;
+hold reload to stop). Beside it, the tab count - the number in a drawn rounded square - opens the
+strip, and holding it opens the browser's own switcher. The menu opens the whole drawer. Back and
+forward are not in the bar; they are the first two shortcuts in the drawer.
+
+**The strip** (`SlothStrip`) is close, one square per open tab, and a new tab. Tap a square to go
+there; hold it to close that tab.
+
+**The drawer** (`SlothBoard`) is, in order: where you are (tap to copy the address) and a close;
+your tabs as cards two across, each with its initial, title and close, with a New tab button and a
+find field once there are more than six; eight labelled shortcuts (Back, Forward, Home, Bookmarks,
+History, Downloads, Find, Settings); and the widgets - clock, calculator, notes, counters - folded
+away until asked for, with Edit beside them. `SlothGrid` lays out the cards and shortcuts. Under it
+all, a layered painted forest moves at different depths as the drawer comes out. The palette is
+chosen in Settings.
 
 Settings, diagnostics and the back stack are shell pages drawn over the app, because the app's own
 settings UI is a different thing wearing the same name.
@@ -62,6 +74,10 @@ Written down because each one cost a shipped build:
   and left the dashboard invisible.
 - **Drawn controls, not glyphs.** A text glyph carries its own bearings; five of them never line
   up into a row.
+- **A label is `maxLines(1)`, never `singleLine`.** A single-line TextView with an ellipsis drew no
+  text at all in the render; the old shortcut row shipped with icons and no words because of it.
+- **The full seat is measured when it is needed.** A height remembered from an earlier layout -
+  or from while the strip had the list hidden - opened the drawer cut off halfway through it.
 - **The strip has two thresholds.** One threshold meant a slow drag flipped between strip and
   dashboard every few pixels, which read as the drawer fighting the finger.
 - **A drag translates the page, it does not relayout it.** Padding the page root on every move
@@ -77,7 +93,7 @@ Written down because each one cost a shipped build:
 ## Tests
 
 `tests/` is a Robolectric harness that renders the shell on the JVM in native graphics mode and
-asserts behaviour rather than pixels: 161 tests at the last build, including the drag, the peek
+asserts behaviour rather than pixels: 220 tests at the last build, including the drag, the peek
 hysteresis, the settings bindings, the diagnostics report, the back order and the drawn icons.
 
 ```sh
