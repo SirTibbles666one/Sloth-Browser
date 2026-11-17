@@ -215,6 +215,17 @@ final class SlothTopBar {
         }
     }
 
+    /**
+     * Show a load exactly as it stands: used when the session on screen changes, since the
+     * other tab may be less far along than the line was.
+     */
+    void showLoad(boolean now, int percent) {
+        setLoading(now);
+        if (now) {
+            progressLine.setScaleX(Math.max(0.05f, Math.min(1f, percent / 100f)));
+        }
+    }
+
     /** How far the load has got, 0-100. Never moves backwards within one load. */
     void setProgress(int percent) {
         if (!loading) {

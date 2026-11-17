@@ -41,7 +41,7 @@ padlock or a magnifier at its start and reload at its end. At rest it shows the 
 (`example.org`); tap in and the whole address is there to edit, and long-pressing copies the whole
 address, never the short form (clear replaces reload while you type).
 While a page loads, a line along the field's bottom edge shows how far it has got and reload
-becomes Stop; both come from GeckoView's own progress delegate (`SlothProgress`), which the shell
+becomes Stop; both come from GeckoView's own progress delegate (`SlothLoad`), which the shell
 wraps so the app's delegate still hears every call. Beside it, the tab count - the number in a drawn rounded square - opens the
 strip, and holding it opens the browser's own switcher. The menu opens the whole drawer. Back and
 forward are not in the bar; they are the first two shortcuts in the drawer.
@@ -99,7 +99,7 @@ Written down because each one cost a shipped build:
 ## Tests
 
 `tests/` is a Robolectric harness that renders the shell on the JVM in native graphics mode and
-asserts behaviour rather than pixels: 238 tests at the last build, including the drag, the peek
+asserts behaviour rather than pixels: 240 tests at the last build, including the drag, the peek
 hysteresis, the settings bindings, the diagnostics report, the back order and the drawn icons.
 
 ```sh

@@ -6020,6 +6020,55 @@ public class SlothShellTest {
                 findByViewTag(overlayOf(activity), "progress-line").getVisibility());
     }
 
+    /** Each tab keeps its own load: switching shows that tab's, even when it is behind. */
+    @Test
+    public void aTabSwitchShowsThatTabsOwnLoad() {
+        TestActivity activity = build();
+        org.mozilla.geckoview.GeckoSession first = pageWithSession(activity);
+        SlothShell.own(activity);
+        SlothShell.tick();
+        first.getProgressDelegate().onPageStart(first, "https://first.example/");
+        first.getProgressDelegate().onProgressChange(first, 80);
+        View line = findByViewTag(overlayOf(activity), "progress-line");
+        assertEquals(0.80f, line.getScaleX(), 0.01f);
+
+        org.mozilla.geckoview.GeckoView page = (org.mozilla.geckoview.GeckoView)
+                findByClass(activity.findViewById(android.R.id.content),
+                        org.mozilla.geckoview.GeckoView.class);
+        org.mozilla.geckoview.GeckoSession second = new org.mozilla.geckoview.GeckoSession();
+        page.setSession(second);
+        SlothShell.tick();
+        assertEquals("the new tab is at rest", View.GONE, line.getVisibility());
+
+        second.getProgressDelegate().onPageStart(second, "https://second.example/");
+        second.getProgressDelegate().onProgressChange(second, 20);
+        assertEquals("its own 20%, not the other tab's 80%", 0.20f, line.getScaleX(), 0.01f);
+
+        // the first tab finishes in the background, then comes back to the front
+        first.getProgressDelegate().onPageStop(first, true);
+        assertEquals("a background stop does not move this tab's line", 0.20f,
+                line.getScaleX(), 0.01f);
+        page.setSession(first);
+        SlothShell.tick();
+        assertEquals("back on the first tab: it finished while away", View.GONE,
+                line.getVisibility());
+        assertEquals("and its page URL was kept, scheme and all", "https://first.example/",
+                SlothLoad.pageUrl(first));
+    }
+
+    /** Stop answers at once; the bar does not wait for the engine's own report. */
+    @Test
+    public void stopEndsTheLineAtOnce() {
+        TestActivity activity = build();
+        org.mozilla.geckoview.GeckoSession session = pageWithSession(activity);
+        SlothShell.own(activity);
+        SlothShell.tick();
+        session.getProgressDelegate().onPageStart(session, "https://example.org");
+        findByViewTag(overlayOf(activity), "bar-reload").performClick();
+        assertFalse(SlothLoad.state(session).loading);
+        assertEquals(View.GONE, findByViewTag(overlayOf(activity), "progress-line").getVisibility());
+    }
+
     @Test
     public void withNoEngineTheBarSimplyHasNoLine() {
         TestActivity activity = build();
