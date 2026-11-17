@@ -27,6 +27,8 @@ HERE="$(cd "$(dirname "$0")/.." && pwd)"
 OUT="${OUT:-$HERE/build}"
 BUILD_TOOLS="${BUILD_TOOLS:-$ANDROID_HOME/build-tools/36.0.0}"
 API="${API:-36}"
+# versionCode of BASE_APK, rewritten to VERSION in the manifest
+BASE_VERSION="${BASE_VERSION:-1108}"
 WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
 
@@ -46,7 +48,7 @@ echo "== hook the base navigation dex into the shell"
 python3 "$HERE/tools/hook_nav.py" "$BASE_APK" "$WORK/classes4.dex"
 
 echo "== unpack the base and swap the dexes"
-python3 "$HERE/tools/build_apk2.py" "$BASE_APK" "$WORK/unsigned.apk" 1108 "$VERSION" \
+python3 "$HERE/tools/build_apk2.py" "$BASE_APK" "$WORK/unsigned.apk" "$BASE_VERSION" "$VERSION" \
     "$WORK/classes4.dex" "$WORK/dex/classes.dex"
 
 echo "== drop the base signature block"
