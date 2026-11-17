@@ -6724,6 +6724,53 @@ public class SlothShellTest {
                 drawerOf(rotated).getLayoutParams().height);
     }
 
+    /* ------------------------------------------------------------------------- health */
+
+    /** An error a place sets aside is counted every time and logged the first time. */
+    @Test
+    public void aSetAsideErrorIsCountedAndNamedOnce() {
+        SlothLog.forgetSwallowedForTest();
+        SlothLog.swallow("SlothTest.place", new RuntimeException("boom"));
+        SlothLog.swallow("SlothTest.place", new RuntimeException("boom"));
+        assertEquals(2, SlothLog.swallowedTotal());
+        assertTrue(SlothLog.swallowedTop(5), SlothLog.swallowedTop(5).contains("2x SlothTest.place"));
+        String log = SlothLog.text();
+        int first = log.indexOf("SET ASIDE SlothTest.place - RuntimeException: boom");
+        assertTrue("named in the log: " + log, first >= 0);
+        assertEquals("once", -1, log.indexOf("SET ASIDE SlothTest.place", first + 1));
+    }
+
+    /** The log is made to be pasted into a message: it keeps hosts, not addresses. */
+    @Test
+    public void theLogKeepsWhereNotWhat() {
+        assertEquals("opened https://example.org", SlothLog.scrub(
+                "opened https://example.org/private/path?q=secret#part"));
+        assertEquals("no address, no change", "drawer closed", SlothLog.scrub("drawer closed"));
+        SlothLog.note("library opened https://bank.example/account/1234?session=abc");
+        String log = SlothLog.text();
+        assertTrue(log.contains("https://bank.example"));
+        assertFalse("the path never reaches the log: " + log, log.contains("account/1234"));
+        assertFalse(log.contains("session=abc"));
+    }
+
+    /** Diagnostics says how the shell is doing against its budgets, and copies no address. */
+    @Test
+    public void diagnosticsReportsHealthAndNoAddresses() {
+        TestActivity activity = build();
+        activity.binding.urlBar.setText("https://example.org/private/page?token=xyz");
+        SlothShell.own(activity);
+        settle();
+        SlothShell.tick();
+        String report = SlothDiag.report(activity);
+        assertTrue(report, report.contains("health:"));
+        assertTrue(report, report.contains("shell build: "));
+        assertTrue(report, report.contains("slowest tick: "));
+        assertTrue(report, report.contains("late settle frames: "));
+        assertTrue(report, report.contains("errors set aside: "));
+        assertFalse("no path or query in a report made to be shared: " + report,
+                report.contains("private/page") || report.contains("token=xyz"));
+    }
+
     /** The shell's own gesture, the one every surface reports into. */
     private static SlothBar.Listener shellGesture(Activity activity) throws Exception {
         java.lang.reflect.Method m = SlothShell.class.getDeclaredMethod("sheetGesture", Activity.class);

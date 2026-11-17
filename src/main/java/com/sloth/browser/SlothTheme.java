@@ -96,6 +96,7 @@ public final class SlothTheme {
             index = context.getSharedPreferences("slothworks", Context.MODE_PRIVATE)
                     .getInt("theme", 0);
         } catch (Throwable ignored) {
+            SlothLog.swallow("SlothTheme.load", ignored);
         }
         if (index < 0 || index >= PALETTES.length) {
             index = 0;
@@ -108,6 +109,7 @@ public final class SlothTheme {
             context.getSharedPreferences("slothworks", Context.MODE_PRIVATE)
                     .edit().putInt("theme", index).apply();
         } catch (Throwable ignored) {
+            SlothLog.swallow("SlothTheme.select", ignored);
         }
     }
 

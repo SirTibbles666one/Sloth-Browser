@@ -73,6 +73,7 @@ final class SlothPrefs {
             report("not a switch: ", field, new IllegalArgumentException(type.getName()));
             return fallback;
         } catch (Throwable t) {
+            SlothLog.swallow("SlothPrefs.flag", t);
             report("reading ", field, t);
             return fallback;
         }
@@ -98,6 +99,7 @@ final class SlothPrefs {
             report("not a number: ", field, new IllegalArgumentException(type.getName()));
             return fallback;
         } catch (Throwable t) {
+            SlothLog.swallow("SlothPrefs.number", t);
             report("reading ", field, t);
             return fallback;
         }
@@ -137,10 +139,12 @@ final class SlothPrefs {
             try {
                 f.set(s, before);
             } catch (Throwable restore) {
+                SlothLog.swallow("SlothPrefs.write", restore);
                 report("restoring ", field, restore);
             }
             return false;
         } catch (Throwable t) {
+            SlothLog.swallow("SlothPrefs.write", t);
             report("writing ", field, t);
             return false;
         }

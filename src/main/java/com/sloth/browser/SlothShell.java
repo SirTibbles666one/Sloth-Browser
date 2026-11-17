@@ -255,6 +255,7 @@ public final class SlothShell {
             Object v = field(binding, name);
             return v instanceof View ? (View) v : null;
         } catch (Throwable ignored) {
+            SlothLog.swallow("SlothShell.bound", ignored);
             return null;
         }
     }
@@ -339,6 +340,7 @@ public final class SlothShell {
                 }
             }
         } catch (Throwable ignored) {
+            SlothLog.swallow("SlothShell.resolve", ignored);
         }
         if (found == null) {
             found = bound(activity, name);
@@ -514,6 +516,7 @@ public final class SlothShell {
     }
 
     public static void own(final Activity activity) {
+        long buildStarted = android.os.SystemClock.elapsedRealtimeNanos();
         try {
             SlothTheme.load(activity);
             // what went wrong in the last session is worth reading in this one
@@ -623,8 +626,10 @@ public final class SlothShell {
                 activity.getSharedPreferences("slothworks", Context.MODE_PRIVATE)
                         .edit().remove("originalBar").apply();
             } catch (Throwable ignored) {
+                SlothLog.swallow("SlothShell.own: clear originalBar", ignored);
             }
             refresh(activity);
+            lastBuildMs = (android.os.SystemClock.elapsedRealtimeNanos() - buildStarted) / 1e6f;
         } catch (Throwable t) {
             // a shell that failed half-way is worse than none: say why, and let the next
             // call build it again from nothing instead of reusing the pieces
@@ -1377,6 +1382,7 @@ public final class SlothShell {
                 ((ViewGroup) overlay.getParent()).removeView(overlay);
             }
         } catch (Throwable ignored) {
+            SlothLog.swallow("SlothShell.rebuild", ignored);
         }
         overlay = null;
         gen++;
@@ -1599,6 +1605,7 @@ public final class SlothShell {
                         f.setAccessible(true);
                         return f.get(activity);
                     } catch (Throwable ignored) {
+                        SlothLog.swallow("SlothShell.settingsObject", ignored);
                         return null;
                     }
                 }
@@ -1964,6 +1971,33 @@ public final class SlothShell {
     }
 
     /** The shell's own state, one line each: what the report says about the frame. */
+    /**
+     * The shell's health against its budgets, one line each: what it costs the phone to run,
+     * and what it set aside. The test harness cannot feel a phone; these are how a phone says
+     * how it is doing.
+     */
+    static String health() {
+        StringBuilder out = new StringBuilder("health:\n");
+        out.append(budget("shell build", lastBuildMs, 50f, "ms"));
+        out.append(budget("slowest tick", maxTickMs, 2f, "ms"));
+        int frames = SlothSheet.settleFrames;
+        float late = frames == 0 ? 0f : 100f * SlothSheet.slowFrames / frames;
+        out.append(budget("late settle frames", late, 5f, "% of " + frames));
+        out.append("  page relayouts: ").append(pageRelayouts).append('\n');
+        out.append("  caught by the backstop: ").append(backstopCatches).append('\n');
+        out.append("  errors set aside: ").append(SlothLog.swallowedTotal()).append('\n');
+        out.append(SlothLog.swallowedTop(5));
+        return out.toString();
+    }
+
+    private static String budget(String name, float value, float limit, String unit) {
+        if (value < 0) {
+            return "  " + name + ": not measured yet\n";
+        }
+        return "  " + name + ": " + String.format(java.util.Locale.US, "%.1f", value) + unit
+                + (value <= limit ? "  ok" : "  OVER " + limit + unit.split(" ")[0]) + '\n';
+    }
+
     static String diagLines(Activity activity) {
         StringBuilder out = new StringBuilder();
         try {
@@ -1988,6 +2022,7 @@ public final class SlothShell {
             // and this is the number that says which
             // the events keep the bar current; the tick only checks. Every change it still
             // finds is one the events missed, and this is the number that says how many
+            out.append(health());
             out.append("layers: ").append(SlothPages.describe()).append('\n');
             out.append("sync: ").append(syncsForTest).append(" syncs, ").append(backstopCatches)
                     .append(" changes caught by the backstop tick\n");
@@ -1997,9 +2032,11 @@ public final class SlothShell {
                     .append('\n');
             View url = resolve(activity, "urlBar");
             out.append("url: ").append(url instanceof TextView
-                    ? String.valueOf(((TextView) url).getText()) : "(no omnibox)").append('\n');
+                    ? SlothLog.scrub(String.valueOf(((TextView) url).getText())) : "(no omnibox)")
+                    .append('\n');
             out.append("tabs: ").append(tabCount(activity)).append('\n');
         } catch (Throwable t) {
+            SlothLog.swallow("SlothShell.diagLines", t);
             out.append("shell state failed: ").append(t.getClass().getSimpleName()).append('\n');
         }
         return out.toString();
@@ -2154,11 +2191,13 @@ public final class SlothShell {
             Object value = call(settings, "getOnboardingDone", new Class<?>[0], new Object[0]);
             return value instanceof Boolean && (Boolean) value;
         } catch (Throwable ignored) {
+            SlothLog.swallow("SlothShell.onboardingDone", ignored);
             try {
                 java.lang.reflect.Field field = settings.getClass().getDeclaredField("onboardingDone");
                 field.setAccessible(true);
                 return field.getBoolean(settings);
             } catch (Throwable missing) {
+                SlothLog.swallow("SlothShell.onboardingDone", missing);
                 return false;
             }
         }
@@ -2170,6 +2209,11 @@ public final class SlothShell {
     private static boolean syncPosted;
     /** What the bar and drawer showed after the last sync, as one comparable line. */
     private static String synced = "";
+    /** How long the last shell build took, and the last and slowest tick. For Health. */
+    static float lastBuildMs = -1;
+    static float lastTickMs = -1;
+    static float maxTickMs;
+
     /** Changes the events missed and the tick found. Diagnostics shows it. */
     static int backstopCatches;
     /** Syncs run, for the harness. */
@@ -2461,6 +2505,7 @@ public final class SlothShell {
             m.invoke(null, activity);
             return true;
         } catch (Throwable ignored) {
+            SlothLog.swallow("SlothShell.stop", ignored);
             return false;
         }
     }
@@ -2521,6 +2566,7 @@ public final class SlothShell {
                     call(activity, "showSwitcher", new Class<?>[0], new Object[0]);
                     return true;
                 } catch (Throwable ignored) {
+                    SlothLog.swallow("SlothShell.showSwitcher", ignored);
                     return false;
                 }
             }
@@ -2854,6 +2900,7 @@ public final class SlothShell {
                     android.provider.Settings.Global.ANIMATOR_DURATION_SCALE, 1f);
             return scale == 0f;
         } catch (Throwable ignored) {
+            SlothLog.swallow("SlothShell.motionOff", ignored);
             return false;
         }
     }
@@ -2895,6 +2942,7 @@ public final class SlothShell {
             ViewGroup content = (ViewGroup) activity.findViewById(Window.ID_ANDROID_CONTENT);
             freePullIn(content);
         } catch (Throwable ignored) {
+            SlothLog.swallow("SlothShell.freeLegacyPull", ignored);
         }
     }
 
@@ -3048,6 +3096,7 @@ public final class SlothShell {
             try {
                 drawer.performHapticFeedback(android.view.HapticFeedbackConstants.CLOCK_TICK);
             } catch (Throwable ignored) {
+                SlothLog.swallow("SlothShell.landOn", ignored);
                 // a device without haptics is not a fault
             }
         }
@@ -3405,6 +3454,7 @@ public final class SlothShell {
                 }
             }
         } catch (Throwable ignored) {
+            SlothLog.swallow("SlothShell.statusBarHeight", ignored);
         }
         int id = activity.getResources().getIdentifier("status_bar_height", "dimen", "android");
         return id > 0 ? activity.getResources().getDimensionPixelSize(id) : dp(activity, 24);
@@ -3422,6 +3472,7 @@ public final class SlothShell {
                 }
             }
         } catch (Throwable ignored) {
+            SlothLog.swallow("SlothShell.thisSite", ignored);
         }
         return "";
     }
@@ -3499,6 +3550,7 @@ public final class SlothShell {
         if (activity == null || activity.isFinishing()) {
             return;
         }
+        long tickStarted = android.os.SystemClock.elapsedRealtimeNanos();
         try {
             blockForFirstRun(activity);
             // the app can leave the page at zero height on its own - a restart, a cleared
@@ -3530,6 +3582,9 @@ public final class SlothShell {
         } catch (Throwable t) {
             SlothLog.warn("tick failed: " + t.getClass().getSimpleName());
         }
+        float took = (android.os.SystemClock.elapsedRealtimeNanos() - tickStarted) / 1e6f;
+        lastTickMs = took;
+        maxTickMs = Math.max(maxTickMs, took);
     }
 
     private static void refresh(Activity activity) {

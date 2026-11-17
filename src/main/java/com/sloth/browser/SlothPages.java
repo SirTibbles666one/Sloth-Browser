@@ -52,6 +52,7 @@ final class SlothPages {
             try {
                 showing = last.showing();
             } catch (Throwable gone) {
+                SlothLog.swallow("SlothPages.top", gone);
                 showing = false;
             }
             if (showing) {

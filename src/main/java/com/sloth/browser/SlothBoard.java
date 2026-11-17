@@ -83,6 +83,7 @@ final class SlothBoard {
             }
             widgetsOpen = prefs.getBoolean("widgetsOpen", false);
         } catch (Throwable ignored) {
+            SlothLog.swallow("SlothBoard.SlothBoard", ignored);
             // no preferences: every widget shown, the shelf folded
         }
         build();
@@ -469,6 +470,7 @@ final class SlothBoard {
             activity.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
                     .edit().putBoolean("widgetsOpen", open).apply();
         } catch (Throwable ignored) {
+            SlothLog.swallow("SlothBoard.setWidgetsOpen", ignored);
             // the shelf still opens; it just will not remember
         }
         applyWidgetsOpen();
@@ -587,6 +589,7 @@ final class SlothBoard {
                     .putStringSet("hiddenWidgets", new java.util.LinkedHashSet<>(hiddenWidgets))
                     .commit();
         } catch (Throwable ignored) {
+            SlothLog.swallow("SlothBoard.toggleWidget", ignored);
             // shown or hidden for this session at least
         }
         applyWidgetVisibility();
@@ -674,6 +677,7 @@ final class SlothBoard {
             note.setText(activity.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
                     .getString("note", ""));
         } catch (Throwable ignored) {
+            SlothLog.swallow("SlothBoard.onTouch", ignored);
             // an empty note
         }
         note.addTextChangedListener(new android.text.TextWatcher() {
@@ -685,6 +689,7 @@ final class SlothBoard {
                     activity.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
                             .edit().putString("note", s.toString()).apply();
                 } catch (Throwable ignored) {
+                    SlothLog.swallow("SlothBoard.onTextChanged", ignored);
                     // the text stays on screen
                 }
                 if (noteStat != null) {

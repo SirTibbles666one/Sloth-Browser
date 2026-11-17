@@ -518,6 +518,7 @@ final class SlothTopBar {
                 ((InputMethodManager) ime).hideSoftInputFromWindow(field.getWindowToken(), 0);
             }
         } catch (Throwable ignored) {
+            SlothLog.swallow("SlothTopBar.hideKeyboard", ignored);
             // the keyboard stays up; the page still loads
         }
     }

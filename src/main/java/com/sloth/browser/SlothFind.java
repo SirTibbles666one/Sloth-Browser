@@ -181,6 +181,7 @@ final class SlothFind {
             Object session = session(activity);
             call(call(session, "getFinder"), "clear");
         } catch (Throwable t) {
+            SlothLog.swallow("SlothFind.clear", t);
             // a finder that is not there has nothing to clear
         }
     }
@@ -196,6 +197,7 @@ final class SlothFind {
                 count.setText((current <= 0 ? 1 : current) + " of " + total);
             }
         } catch (Throwable t) {
+            SlothLog.swallow("SlothFind.report", t);
             count.setText("");
         }
     }
