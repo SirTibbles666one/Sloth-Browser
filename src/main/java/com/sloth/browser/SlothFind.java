@@ -73,8 +73,10 @@ final class SlothFind {
         row.addView(field, new LinearLayout.LayoutParams(
                 0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
 
-        final TextView previous = step(activity, "\u2039", "Previous match");
-        final TextView next = step(activity, "\u203a", "Next match");
+        // up and down: matches run through the page top to bottom, so the arrows point
+        // the way the page will move, not left and right like the bar's history arrows
+        final View previous = step(activity, SlothIcons.Kind.BACK, 90f, "Previous match");
+        final View next = step(activity, SlothIcons.Kind.FORWARD, 90f, "Next match");
 
         final TextView count = new TextView(activity);
         count.setTextSize(12f);
@@ -84,27 +86,17 @@ final class SlothFind {
         row.addView(count, new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT));
 
-        row.addView(previous, new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT));
-        row.addView(next, new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+        row.addView(previous);
+        row.addView(next);
 
-        TextView close = new TextView(activity);
-        close.setText("\u00d7");
-        close.setTextSize(20f);
-        close.setTextColor(SlothTheme.ink());
-        close.setGravity(Gravity.CENTER);
-        close.setContentDescription("Close find");
-        close.setPadding(pixels(activity, 10), pixels(activity, 4),
-                pixels(activity, 10), pixels(activity, 4));
+        View close = step(activity, SlothIcons.Kind.CLOSE, 0f, "Close find");
         close.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View v) {
                 onClose.run();
             }
         });
-        row.addView(close, new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+        row.addView(close);
 
         bar.addView(row);
         final SlothFind find = new SlothFind(activity, count, field);
@@ -138,17 +130,24 @@ final class SlothFind {
         return bar;
     }
 
-    /** A small step button: no glyph font, no icon asset, the same two strokes as the bar. */
-    private static TextView step(Activity activity, String glyph, String description) {
-        TextView view = new TextView(activity);
-        view.setText(glyph);
-        view.setTextSize(20f);
-        view.setTextColor(SlothTheme.ink());
-        view.setGravity(Gravity.CENTER);
-        view.setContentDescription(description);
-        view.setPadding(pixels(activity, 10), pixels(activity, 4),
-                pixels(activity, 10), pixels(activity, 4));
-        return view;
+    /**
+     * A small button around a drawn mark, the same strokes as the bar. A text glyph arrives
+     * in the font's weight and sits on its baseline, a little off the middle of its box.
+     */
+    private static View step(Activity activity, SlothIcons.Kind kind, float turn,
+            String description) {
+        android.widget.FrameLayout button = new android.widget.FrameLayout(activity);
+        button.setContentDescription(description);
+        button.setClickable(true);
+        button.setFocusable(true);
+        int size = pixels(activity, 40);
+        button.setLayoutParams(new LinearLayout.LayoutParams(size, size));
+        SlothIcons mark = SlothIcons.decorative(activity, kind, 18, SlothTheme.ink());
+        mark.setRotation(turn);
+        android.widget.FrameLayout.LayoutParams lp = new android.widget.FrameLayout.LayoutParams(
+                mark.getLayoutParams().width, mark.getLayoutParams().height, Gravity.CENTER);
+        button.addView(mark, lp);
+        return button;
     }
 
     /** Ask the engine for this query, or for the next match in flags' direction. */
