@@ -217,3 +217,18 @@ lost about 730 lines of the old builders.
 - `audit/shell_refs.py` was not run: it needs a built APK, and the base APK is not here. The new
   classes reflect on nothing the old ones did not (`btnBack`, `btnFwd`, `btnReload`, `btnPlus`,
   `btnHome`, `pageInfo`, `showSwitcher`, `go`).
+
+## Page progress and a real Stop
+
+The README listed "no loading progress or real Stop: no progress API is reachable from the shell".
+GeckoView's public `GeckoSession.setProgressDelegate` is reachable the same way Find reaches the
+session, so `SlothProgress` puts a proxy delegate on the current session: it tells the bar, then
+forwards every call to whatever delegate the app had set, unchanged. The tick re-checks the
+session, so a tab change or an app that sets its own delegate later is wrapped again - never a
+wrapper inside a wrapper - and a background tab's calls do not move the bar. Stop calls
+`GeckoSession.stop()`, with the app's own routine as the fallback.
+
+Open: the names this relies on (`getProgressDelegate`, `setProgressDelegate`,
+`GeckoSession$ProgressDelegate`, `stop`) are GeckoView's public API, but `shell_refs.py` has not
+checked them against the shipped APK, which is not here. If the app's GeckoView is minified,
+the wrapper is simply not installed and the bar behaves as before; the log says so.

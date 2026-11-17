@@ -523,6 +523,7 @@ public final class SlothShell {
         animating = false;
         lastProbe = 0;
         SlothCover.forget();
+        SlothProgress.forget();
         owner = null;
     }
 
@@ -2322,6 +2323,13 @@ public final class SlothShell {
     }
 
     private static boolean stop(Activity activity) {
+        // the engine's own stop first; the app's routine is the fallback for a build without one
+        if (SlothProgress.stop(activity)) {
+            if (topBar != null) {
+                topBar.setLoading(false);
+            }
+            return true;
+        }
         try {
             java.lang.reflect.Method m = Class.forName("com.sloth.browser.BarUnion")
                     .getDeclaredMethod("stop", Activity.class);
@@ -2342,6 +2350,30 @@ public final class SlothShell {
      * instead of wrapping: a flick that lands you on the tab you were trying to leave is
      * worse than one that does nothing.</p>
      */
+    /** The engine's progress, drawn on the bar. Reads topBar at call time: a rebuild replaces it. */
+    private static final SlothProgress.Listener PROGRESS = new SlothProgress.Listener() {
+        @Override
+        public void started() {
+            if (topBar != null) {
+                topBar.setLoading(true);
+            }
+        }
+
+        @Override
+        public void progress(int percent) {
+            if (topBar != null) {
+                topBar.setProgress(percent);
+            }
+        }
+
+        @Override
+        public void stopped() {
+            if (topBar != null) {
+                topBar.setLoading(false);
+            }
+        }
+    };
+
     /** What the bar asks of the browser, answered through the app's own controls. */
     private static SlothTopBar.Host barHost(final Activity activity) {
         return new SlothTopBar.Host() {
@@ -3368,6 +3400,8 @@ public final class SlothShell {
             // asked once the window is laid out: this is the only evidence the request worked
             checkEdgeWindow(activity);
             syncHistory(activity);
+            // the session changes with the tab, and the app may set its own delegate later
+            SlothProgress.watch(activity, PROGRESS);
             if (board != null && address != null) {
                 // the drawer's address line is the same fact as the bar's, so it is kept
                 // the same way: on the timer, not only when the drawer is rebuilt

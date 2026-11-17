@@ -47,7 +47,7 @@ final class SlothTopBar {
 
         void reload();
 
-        /** Reload was held: stop loading. */
+        /** Reload was held, or tapped while the page loads: stop loading. */
         boolean stop();
 
         /** The padlock was tapped: the site's own information. */
@@ -69,6 +69,9 @@ final class SlothTopBar {
     private EditText field;
     private View clear;
     private View reload;
+    private SlothIcons reloadIcon;
+    private View progressLine;
+    private boolean loading;
     private TextView countFace;
     private View countButton;
     private View menu;
@@ -85,7 +88,7 @@ final class SlothTopBar {
         row.setBackground(null);
         row.setLayoutParams(new FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, dp(56), Gravity.TOP));
-        row.addView(buildPill(), new LinearLayout.LayoutParams(0, dp(44), 1f));
+        row.addView(buildField(), new LinearLayout.LayoutParams(0, dp(44), 1f));
         countButton = buildCount();
         LinearLayout.LayoutParams countLp = new LinearLayout.LayoutParams(dp(44), dp(44));
         countLp.leftMargin = dp(4);
@@ -129,6 +132,41 @@ final class SlothTopBar {
         return siteIcon;
     }
 
+    boolean loading() {
+        return loading;
+    }
+
+    /** A load began or ended: reload becomes Stop while it runs, and the line shows. */
+    void setLoading(boolean now) {
+        if (loading == now) {
+            return;
+        }
+        loading = now;
+        reloadIcon.kind(now ? SlothIcons.Kind.CLOSE : SlothIcons.Kind.RELOAD);
+        reload.setContentDescription(now ? "Stop loading" : "Reload");
+        if (now) {
+            progressLine.animate().cancel();
+            progressLine.setAlpha(1f);
+            progressLine.setScaleX(0.05f);
+            progressLine.setVisibility(View.VISIBLE);
+        } else {
+            // finish the line, then let it go: a load that ends at 60% still ended
+            progressLine.setScaleX(1f);
+            progressLine.setVisibility(View.GONE);
+        }
+    }
+
+    /** How far the load has got, 0-100. Never moves backwards within one load. */
+    void setProgress(int percent) {
+        if (!loading) {
+            return;
+        }
+        float fraction = Math.max(0.05f, Math.min(1f, percent / 100f));
+        if (fraction > progressLine.getScaleX()) {
+            progressLine.setScaleX(fraction);
+        }
+    }
+
     /** Every control, for the shell's fade and its accessibility checks. */
     View[] controls() {
         return new View[]{pill, countButton, menu};
@@ -146,9 +184,37 @@ final class SlothTopBar {
     }
 
     /* ------------------------------------------------------------------- pill */
+    /**
+     * The field and, along its bottom edge, the page's loading progress. The line is a scale,
+     * not a width: a load reports many times a second, and a layout per report would be paid by
+     * the page underneath.
+     */
+    private View buildField() {
+        FrameLayout frame = new FrameLayout(activity);
+        frame.setTag("address-pill");
+        frame.addView(buildPill(), new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+        progressLine = new View(activity);
+        progressLine.setTag("progress-line");
+        GradientDrawable line = new GradientDrawable();
+        line.setCornerRadius(dp(2));
+        line.setColor(SlothTheme.accent());
+        progressLine.setBackground(line);
+        progressLine.setPivotX(0f);
+        progressLine.setScaleX(0f);
+        progressLine.setVisibility(View.GONE);
+        progressLine.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);
+        FrameLayout.LayoutParams lineLp = new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, dp(3), Gravity.BOTTOM);
+        lineLp.leftMargin = dp(18);
+        lineLp.rightMargin = dp(18);
+        lineLp.bottomMargin = dp(1);
+        frame.addView(progressLine, lineLp);
+        return frame;
+    }
+
     private View buildPill() {
         pill = new LinearLayout(activity);
-        pill.setTag("address-pill");
         pill.setOrientation(LinearLayout.HORIZONTAL);
         pill.setGravity(Gravity.CENTER_VERTICAL);
         pill.setPadding(dp(4), 0, dp(2), 0);
@@ -198,10 +264,17 @@ final class SlothTopBar {
 
         reload = iconButton(SlothIcons.Kind.RELOAD, "Reload", 18);
         reload.setTag("bar-reload");
+        reloadIcon = (SlothIcons) ((ViewGroup) reload).getChildAt(0);
         reload.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View v) {
-                host.reload();
+                // while the page loads this is Stop: the control at the end of a loading field
+                // is the one people reach for when a page hangs
+                if (loading) {
+                    host.stop();
+                } else {
+                    host.reload();
+                }
             }
         });
         reload.setLongClickable(true);

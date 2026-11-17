@@ -37,8 +37,10 @@ grows it into the drawer, which rests at one of three heights - shut, the 64 dp 
 the whole drawer fitted to what it holds. A sideways flick across the field changes tab.
 
 **The bar** (`SlothTopBar`) is a search field first: the field takes the width, with the site's
-padlock or a magnifier at its start and reload at its end (clear replaces reload while you type;
-hold reload to stop). Beside it, the tab count - the number in a drawn rounded square - opens the
+padlock or a magnifier at its start and reload at its end (clear replaces reload while you type).
+While a page loads, a line along the field's bottom edge shows how far it has got and reload
+becomes Stop; both come from GeckoView's own progress delegate (`SlothProgress`), which the shell
+wraps so the app's delegate still hears every call. Beside it, the tab count - the number in a drawn rounded square - opens the
 strip, and holding it opens the browser's own switcher. The menu opens the whole drawer. Back and
 forward are not in the bar; they are the first two shortcuts in the drawer.
 
@@ -93,7 +95,7 @@ Written down because each one cost a shipped build:
 ## Tests
 
 `tests/` is a Robolectric harness that renders the shell on the JVM in native graphics mode and
-asserts behaviour rather than pixels: 220 tests at the last build, including the drag, the peek
+asserts behaviour rather than pixels: 225 tests at the last build, including the drag, the peek
 hysteresis, the settings bindings, the diagnostics report, the back order and the drawn icons.
 
 ```sh
@@ -114,5 +116,4 @@ Open, honestly:
 - No on-device verification of the last several builds — the phone is the only renderer.
 - The audit of 1223 found and fixed nine faults; `docs/AUDIT.md` lists them with what is still open.
 - Bookmarks/History/Downloads depend on the app drawing into a lent panel; the count decides.
-- No loading progress or real Stop: no progress API is reachable from the shell.
 - `SlothShell` is still one large static class; the split is not done.

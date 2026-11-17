@@ -6,6 +6,8 @@ import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertNotEquals;
 import static org.junit.Assert.assertTrue;
+import static org.junit.Assert.assertNotSame;
+import static org.junit.Assert.assertSame;
 
 import android.app.Activity;
 import android.content.Context;
@@ -3312,9 +3314,16 @@ public class SlothShellTest {
         SlothShell.testNavInset = 144; // a three-button navigation bar
         TestActivity activity = build();
         addTabs(activity, "Docs", "Mail", "News");
+        org.mozilla.geckoview.GeckoSession session = pageWithSession(activity);
         SlothShell.own(activity);
         settle();
         shoot(activity, new java.io.File(dir, "01-collapsed.png"));
+        SlothShell.tick();
+        session.getProgressDelegate().onPageStart(session, "https://example.org");
+        session.getProgressDelegate().onProgressChange(session, 60);
+        settle();
+        shoot(activity, new java.io.File(dir, "01b-loading.png"));
+        session.getProgressDelegate().onPageStop(session, true);
 
         View handle = findByViewTag(overlayOf(activity), "drag");
         long t0 = android.os.SystemClock.uptimeMillis();
@@ -5609,6 +5618,163 @@ public class SlothShellTest {
                 grid.getChildAt(0).getRight() + px(10));
         assertEquals("columns share the width", grid.getChildAt(0).getWidth(),
                 grid.getChildAt(2).getWidth());
+    }
+
+    /* ----------------------------------------------------------------- page progress */
+
+    /** An engine view with a session, inside the app's own root, as the Find tests build it. */
+    private org.mozilla.geckoview.GeckoSession pageWithSession(TestActivity activity) {
+        org.mozilla.geckoview.GeckoView page = new org.mozilla.geckoview.GeckoView(activity);
+        org.mozilla.geckoview.GeckoSession session = new org.mozilla.geckoview.GeckoSession();
+        page.setSession(session);
+        ViewGroup window = activity.findViewById(android.R.id.content);
+        ((ViewGroup) window.getChildAt(0)).addView(page);
+        return session;
+    }
+
+    /** What the app's own delegate saw, so forwarding can be checked. */
+    private static final class AppDelegate implements org.mozilla.geckoview.GeckoSession.ProgressDelegate {
+        final java.util.List<String> calls = new java.util.ArrayList<>();
+
+        @Override
+        public void onPageStart(org.mozilla.geckoview.GeckoSession session, String url) {
+            calls.add("start " + url);
+        }
+
+        @Override
+        public void onProgressChange(org.mozilla.geckoview.GeckoSession session, int progress) {
+            calls.add("progress " + progress);
+        }
+
+        @Override
+        public void onPageStop(org.mozilla.geckoview.GeckoSession session, boolean success) {
+            calls.add("stop " + success);
+        }
+    }
+
+    @Test
+    public void aLoadingPageShowsItsProgressAndTheAppStillHearsIt() {
+        TestActivity activity = build();
+        org.mozilla.geckoview.GeckoSession session = pageWithSession(activity);
+        AppDelegate app = new AppDelegate();
+        session.setProgressDelegate(app);
+        SlothShell.own(activity);
+        SlothShell.tick();
+
+        org.mozilla.geckoview.GeckoSession.ProgressDelegate wrapped = session.getProgressDelegate();
+        assertNotSame("the session carries the shell's wrapper", app, wrapped);
+        View bar = findByViewTag(overlayOf(activity), "bar");
+        View line = findByViewTag(bar, "progress-line");
+        View reload = findByViewTag(bar, "bar-reload");
+        assertEquals("at rest, no line", View.GONE, line.getVisibility());
+
+        wrapped.onPageStart(session, "https://example.org");
+        wrapped.onProgressChange(session, 40);
+        assertEquals("loading: the line shows", View.VISIBLE, line.getVisibility());
+        assertEquals("at the load's progress", 0.40f, line.getScaleX(), 0.01f);
+        assertEquals("and reload has become Stop", "Stop loading",
+                String.valueOf(reload.getContentDescription()));
+
+        wrapped.onProgressChange(session, 25);
+        assertEquals("a load never runs backwards", 0.40f, line.getScaleX(), 0.01f);
+
+        wrapped.onPageStop(session, true);
+        assertEquals("done: the line goes", View.GONE, line.getVisibility());
+        assertEquals("and reload is reload again", "Reload",
+                String.valueOf(reload.getContentDescription()));
+        assertEquals("the app heard every call, in order",
+                java.util.Arrays.asList("start https://example.org", "progress 40", "progress 25",
+                        "stop true"), app.calls);
+    }
+
+    @Test
+    public void reloadWhileLoadingStopsThePage() {
+        TestActivity activity = build();
+        org.mozilla.geckoview.GeckoSession session = pageWithSession(activity);
+        Counter reloads = new Counter();
+        activity.binding.btnReload.setOnClickListener(reloads);
+        SlothShell.own(activity);
+        SlothShell.tick();
+
+        session.getProgressDelegate().onPageStart(session, "https://example.org");
+        findByViewTag(overlayOf(activity), "bar-reload").performClick();
+        assertEquals("the engine was told to stop", 1, session.stops);
+        assertEquals("not to reload", 0, reloads.clicks);
+        assertEquals("and the bar stops saying it is loading", "Reload",
+                String.valueOf(findByViewTag(overlayOf(activity), "bar-reload").getContentDescription()));
+
+        findByViewTag(overlayOf(activity), "bar-reload").performClick();
+        assertEquals("at rest the same control reloads", 1, reloads.clicks);
+    }
+
+    @Test
+    public void theWrapperIsNeverWrappedTwice() {
+        TestActivity activity = build();
+        org.mozilla.geckoview.GeckoSession session = pageWithSession(activity);
+        SlothShell.own(activity);
+        SlothShell.tick();
+        Object first = session.getProgressDelegate();
+        assertNotNull("a session with no delegate of its own still gets one", first);
+        SlothShell.tick();
+        SlothShell.tick();
+        assertSame("ticking again leaves the same wrapper", first, session.getProgressDelegate());
+
+        // the app sets a delegate of its own later: the next tick wraps that one instead
+        AppDelegate app = new AppDelegate();
+        session.setProgressDelegate(app);
+        SlothShell.tick();
+        assertNotSame(app, session.getProgressDelegate());
+        session.getProgressDelegate().onPageStart(session, "u");
+        assertEquals("and forwards to it", java.util.Collections.singletonList("start u"), app.calls);
+    }
+
+    @Test
+    public void anOldTabsProgressDoesNotMoveTheBar() {
+        TestActivity activity = build();
+        org.mozilla.geckoview.GeckoSession first = pageWithSession(activity);
+        SlothShell.own(activity);
+        SlothShell.tick();
+        org.mozilla.geckoview.GeckoSession.ProgressDelegate oldWrapper = first.getProgressDelegate();
+
+        // the tab changes: the page view now shows another session
+        org.mozilla.geckoview.GeckoView page = (org.mozilla.geckoview.GeckoView)
+                findByClass(activity.findViewById(android.R.id.content),
+                        org.mozilla.geckoview.GeckoView.class);
+        org.mozilla.geckoview.GeckoSession second = new org.mozilla.geckoview.GeckoSession();
+        page.setSession(second);
+        SlothShell.tick();
+
+        oldWrapper.onPageStart(first, "background");
+        assertEquals("a tab in the background loading is not this page loading", View.GONE,
+                findByViewTag(overlayOf(activity), "progress-line").getVisibility());
+        second.getProgressDelegate().onPageStart(second, "front");
+        assertEquals(View.VISIBLE,
+                findByViewTag(overlayOf(activity), "progress-line").getVisibility());
+    }
+
+    @Test
+    public void withNoEngineTheBarSimplyHasNoLine() {
+        TestActivity activity = build();
+        SlothShell.own(activity);
+        SlothShell.tick();
+        assertEquals(View.GONE, findByViewTag(overlayOf(activity), "progress-line").getVisibility());
+        assertEquals("Reload",
+                String.valueOf(findByViewTag(overlayOf(activity), "bar-reload").getContentDescription()));
+    }
+
+    private static View findByClass(View v, Class<?> type) {
+        if (type.isInstance(v)) {
+            return v;
+        }
+        if (v instanceof ViewGroup) {
+            for (int i = 0; i < ((ViewGroup) v).getChildCount(); i++) {
+                View hit = findByClass(((ViewGroup) v).getChildAt(i), type);
+                if (hit != null) {
+                    return hit;
+                }
+            }
+        }
+        return null;
     }
 
 }
