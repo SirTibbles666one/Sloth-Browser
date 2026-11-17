@@ -174,8 +174,12 @@ public class SlothShellTest {
         }
     }
 
+    /** The controller of the last window built, so a test can destroy it as a rotation does. */
+    private org.robolectric.android.controller.ActivityController<TestActivity> lastBuilt;
+
     private TestActivity build() {
-        TestActivity activity = Robolectric.buildActivity(TestActivity.class).create().get();
+        lastBuilt = Robolectric.buildActivity(TestActivity.class).create();
+        TestActivity activity = lastBuilt.get();
         FakeBinding b = activity.binding;
 
         LinearLayout root = new LinearLayout(activity);
@@ -6523,21 +6527,38 @@ public class SlothShellTest {
         }
     }
 
-    /** The case the fixed order got wrong: Find over Diagnostics. */
+    /** The case the fixed order got wrong, as it happens: Diagnostics opened from Settings. */
     @Test
-    public void findOverDiagnosticsClosesFindFirst() {
+    public void diagnosticsOverSettingsClosesDiagnosticsFirst() {
         TestActivity activity = build();
         SlothShell.own(activity);
         settle();
+        SlothShell.openSettingsPage(activity);
+        settle();
         SlothShell.openDiagPage(activity);
+        settle();
+        assertTrue(pageShowing(activity, "settings-page"));
+        assertNull("our own page over Settings is not a fault", SlothShell.mislay());
+        SlothShell.backOneLayer(activity);
+        settle();
+        assertFalse("diagnostics, the newer layer, went first", pageShowing(activity, "diag-page"));
+        assertTrue("and Back came back to Settings", pageShowing(activity, "settings-page"));
+    }
+
+    /** Find searches the page, so it puts away a page of ours that covers it. */
+    @Test
+    public void findPutsAwayAPageCoveringThePage() {
+        TestActivity activity = build();
+        SlothShell.own(activity);
+        settle();
+        SlothShell.openSettingsPage(activity);
         settle();
         SlothShell.openFind(activity);
         settle();
-        assertTrue(pageShowing(activity, "diag-page"));
-        SlothShell.backOneLayer(activity);
-        settle();
-        assertFalse("find, the newer layer, went first", pageShowing(activity, "find-bar"));
-        assertTrue("diagnostics is still there under it", pageShowing(activity, "diag-page"));
+        assertTrue(pageShowing(activity, "find-bar"));
+        assertFalse("found by the monkey, seed 2: find opened over settings",
+                pageShowing(activity, "settings-page"));
+        assertNull(SlothShell.mislay());
     }
 
     /** A layer closed by its own button is not the one Back closes next. */
@@ -6546,15 +6567,15 @@ public class SlothShellTest {
         TestActivity activity = build();
         SlothShell.own(activity);
         settle();
-        SlothShell.openLibrary(activity, "history");
+        SlothShell.openSettingsPage(activity);
         settle();
-        SlothShell.openFind(activity);
+        SlothShell.openDiagPage(activity);
         settle();
-        SlothShell.closeFind(activity);
+        // Diagnostics closes by its own means, not by Back
+        findByViewTag(overlayOf(activity), "diag-page").setVisibility(View.GONE);
+        assertTrue("settings is on top now", SlothShell.backOneLayer(activity));
         settle();
-        assertTrue("library is on top now", SlothShell.backOneLayer(activity));
-        settle();
-        assertFalse(pageShowing(activity, "library-page"));
+        assertFalse(pageShowing(activity, "settings-page"));
     }
 
     /** A list in the drawer goes first; the drawer it sits in goes next. */
@@ -6872,6 +6893,39 @@ public class SlothShellTest {
                 drawerOf(activity).getLayoutParams().height);
     }
 
+    /** A list opened while the keyboard is up gets the whole drawer once the keyboard goes. */
+    @Test
+    public void aDrawerOpenedUnderTheKeyboardGrowsWhenItGoes() throws Exception {
+        TestActivity activity = build();
+        SlothShell.own(activity);
+        settle();
+        keyboard(activity, activity.getResources().getDisplayMetrics().heightPixels / 2);
+        settle();
+        SlothShell.openWidgetChooser(activity);
+        settle();
+        keyboard(activity, 0);
+        settle();
+        assertEquals("found by the monkey, seed 1: it stayed at the keyboard's room",
+                fullSeat(activity), drawerOf(activity).getLayoutParams().height);
+    }
+
+    /** The keyboard changes height while up (a suggestion strip): the drawer follows it. */
+    @Test
+    public void aDrawerFollowsTheKeyboardAsItChangesHeight() throws Exception {
+        TestActivity activity = build();
+        SlothShell.own(activity);
+        settle();
+        int screen = activity.getResources().getDisplayMetrics().heightPixels;
+        keyboard(activity, screen / 2);
+        settle();
+        SlothShell.openWidgetChooser(activity);
+        settle();
+        keyboard(activity, screen / 2 - px(40));
+        settle();
+        assertEquals("found by the monkey, seed 3: the drawer kept the old keyboard's room",
+                fullSeat(activity), drawerOf(activity).getLayoutParams().height);
+    }
+
     /** A shut drawer is not opened by the keyboard, and the page's own typing is left alone. */
     @Test
     public void theKeyboardDoesNotOpenAShutDrawer() {
@@ -6883,6 +6937,449 @@ public class SlothShellTest {
         keyboard(activity, 0);
         settle();
         assertEquals(0, drawerOf(activity).getLayoutParams().height);
+    }
+
+    /* ---------------------------------------------------------- the monkey: random use */
+
+    /**
+     * Random use of the real shell, with the rules that must hold after every step.
+     *
+     * <p>Each run is seeded, and a failure names the seed, the step and the actions that led
+     * there, so it replays exactly. CI runs a few seeds; SLOTH_MONKEY=seeds:steps runs more.</p>
+     */
+    @Test
+    public void randomUseNeverBreaksTheRules() throws Exception {
+        int seeds = 3;
+        int steps = 250;
+        String deep = System.getenv("SLOTH_MONKEY");
+        if (deep != null && deep.contains(":")) {
+            seeds = Integer.parseInt(deep.split(":")[0]);
+            steps = Integer.parseInt(deep.split(":")[1]);
+        }
+        for (int seed = 1; seed <= seeds; seed++) {
+            monkey(seed, steps);
+        }
+    }
+
+    private void monkey(long seed, int steps) throws Exception {
+        java.util.Random random = new java.util.Random(seed);
+        java.util.ArrayDeque<String> recent = new java.util.ArrayDeque<>();
+        TestActivity activity = build();
+        addTabs(activity, "Docs", "Mail", "News");
+        org.mozilla.geckoview.GeckoSession session = pageWithSession(activity);
+        SlothShell.own(activity);
+        settle();
+        for (int step = 0; step < steps; step++) {
+            String did;
+            try {
+                did = act(random, activity, session);
+                if (did.startsWith("rotate")) {
+                    org.robolectric.android.controller.ActivityController<TestActivity> going = lastBuilt;
+                    activity = build();
+                    addTabs(activity, "Docs", "Mail", "News");
+                    session = pageWithSession(activity);
+                    SlothShell.own(activity);
+                    // a rotation destroys the old window; left alive, every one is kept
+                    going.destroy();
+                }
+                settle();
+            } catch (Throwable t) {
+                throw new AssertionError("seed " + seed + " step " + step + " threw " + t
+                        + "\nafter: " + recent, t);
+            }
+            recent.addLast(step + ":" + did);
+            while (recent.size() > 12) {
+                recent.removeFirst();
+            }
+            String broken;
+            try {
+                broken = brokenRule(activity);
+            } catch (Throwable t) {
+                StringBuilder why = new StringBuilder();
+                for (String line : SlothLog.text().split("\n")) {
+                    if (line.contains("shell build failed")) {
+                        why.append(line).append('\n');
+                    }
+                }
+                Throwable root = t;
+                while (root.getCause() != null) {
+                    root = root.getCause();
+                }
+                java.io.StringWriter trace = new java.io.StringWriter();
+                root.printStackTrace(new java.io.PrintWriter(trace));
+                throw new AssertionError("seed " + seed + " step " + step + " checking threw " + root
+                        + "\nafter: " + recent + "\nlog: " + why + "\n" + trace.toString()
+                        .substring(0, Math.min(1500, trace.toString().length())), t);
+            }
+            if (broken != null) {
+                throw new AssertionError("seed " + seed + " step " + step + ": " + broken
+                        + "\nafter: " + recent);
+            }
+        }
+        SlothShell.releaseShellForTest();
+    }
+
+    private String act(java.util.Random random, TestActivity activity,
+                       org.mozilla.geckoview.GeckoSession session) throws Exception {
+        View root = overlayOf(activity);
+        switch (random.nextInt(17)) {
+            case 0: {
+                int dy = px(random.nextInt(900) - 450);
+                float v = (random.nextInt(41) - 20) / 10f;
+                SlothBar.Listener gesture = shellGesture(activity);
+                gesture.onDragStart(300f, 0f);
+                int moves = 1 + random.nextInt(4);
+                for (int m = 1; m <= moves; m++) {
+                    gesture.onDrag(dy * m / (float) moves);
+                    if (random.nextBoolean()) {
+                        org.robolectric.shadows.ShadowLooper.idleMainLooper();
+                    }
+                }
+                gesture.onRelease(v);
+                return "drag " + dy + "px at " + v;
+            }
+            case 1:
+                shellGesture(activity).onTap();
+                return "tap the bar";
+            case 2:
+                findByViewTag(root, "tab-count").performClick();
+                return "tap the tab count";
+            case 3:
+                findByViewTag(root, "bar-menu").performClick();
+                return "tap the menu";
+            case 4:
+                SlothShell.backOneLayer(activity);
+                return "back";
+            case 5: {
+                String page = PAGES[random.nextInt(PAGES.length)];
+                openPage(activity, page);
+                return "open " + page;
+            }
+            case 6:
+                if (random.nextBoolean()) {
+                    SlothShell.openWidgetChooser(activity);
+                    return "open the widget list";
+                }
+                SlothShell.openPalettePicker(activity);
+                return "open the palette list";
+            case 7: {
+                org.mozilla.geckoview.GeckoSession.ProgressDelegate load = session.getProgressDelegate();
+                if (load == null) {
+                    SlothShell.tick();
+                    return "tick (no delegate yet)";
+                }
+                int which = random.nextInt(3);
+                if (which == 0) {
+                    load.onPageStart(session, "https://site" + random.nextInt(4) + ".example/p");
+                    return "page start";
+                }
+                if (which == 1) {
+                    load.onProgressChange(session, random.nextInt(101));
+                    return "progress";
+                }
+                load.onPageStop(session, true);
+                return "page stop";
+            }
+            case 8:
+                activity.binding.urlBar.setText("site" + random.nextInt(4) + ".example");
+                return "app address changes";
+            case 9: {
+                int ime = random.nextBoolean() ? 0 : px(250 + random.nextInt(150));
+                keyboard(activity, ime);
+                return "keyboard " + ime;
+            }
+            case 10:
+                SlothShell.tick();
+                return "tick";
+            case 11:
+                if (random.nextInt(4) == 0) {
+                    return "rotate";
+                }
+                SlothShell.tick();
+                return "tick";
+            case 12: {
+                View reload = findByViewTag(root, "bar-reload");
+                reload.performClick();
+                return "tap reload or stop";
+            }
+            case 13: {
+                SlothShell.setDrawerOverPage(activity, random.nextBoolean());
+                return "drawer mode " + SlothShell.drawerOverPage(activity);
+            }
+            case 14: {
+                EditText field = findAddress(root);
+                field.requestFocus();
+                field.setText(random.nextBoolean() ? "sloth facts" : "https://example.org/x");
+                field.onEditorAction(android.view.inputmethod.EditorInfo.IME_ACTION_GO);
+                return "type and go";
+            }
+            case 15: {
+                View strip = findByViewTag(drawerOf(activity), "peek-strip");
+                if (strip instanceof ViewGroup && ((ViewGroup) strip).getChildCount() > 2) {
+                    View square = ((ViewGroup) strip).getChildAt(1 + random.nextInt(
+                            ((ViewGroup) strip).getChildCount() - 2));
+                    square.performClick();
+                    return "pick a tab in the strip";
+                }
+                return "no strip";
+            }
+            default: {
+                SlothShell.closeFind(activity);
+                return "close find";
+            }
+        }
+    }
+
+    /** The rules that hold whenever nothing is moving. Null when all hold. */
+    private String brokenRule(TestActivity activity) throws Exception {
+        View drawer = drawerOf(activity);
+        int h = drawer.getLayoutParams().height;
+        int peek = peekHeight(activity);
+        int full = fullSeat(activity);
+        java.lang.reflect.Method room = SlothShell.class.getDeclaredMethod("fullHeight", Activity.class);
+        room.setAccessible(true);
+        int limit = (Integer) room.invoke(null, activity);
+        boolean onSeat = h == 0 || h == peek || h == full
+                || (SlothShell.imeInset > 0 && h == limit);
+        if (!onSeat) {
+            return "the drawer rests between seats: " + h + " (seats 0, " + peek + ", " + full
+                    + (SlothShell.imeInset > 0 ? ", keyboard room " + limit : "") + ")";
+        }
+        String layers = SlothShell.mislay();
+        if (layers != null) {
+            return "layers disagree: " + layers;
+        }
+        SlothPages.Layer top = SlothPages.top();
+        if (top != null && !top.showing()) {
+            return "the top of the Back stack is not showing: " + top.name();
+        }
+        ViewGroup content = activity.findViewById(android.R.id.content);
+        View page = content.getChildAt(0) == overlayOf(activity) ? content.getChildAt(1)
+                : content.getChildAt(0);
+        if (page != null && Math.abs(page.getTranslationY()) > 0.5f) {
+            return "the page is left shifted at rest by " + page.getTranslationY();
+        }
+        if (findAddress(overlayOf(activity)) == null) {
+            return "the address field is gone";
+        }
+        return null;
+    }
+
+    @Test
+    public void zzReplaySeed() throws Exception {
+        String which = System.getenv("SLOTH_REPLAY");
+        if (which == null) {
+            return;
+        }
+        try {
+            monkey(Long.parseLong(which.split(":")[0]), Integer.parseInt(which.split(":")[1]));
+        } catch (AssertionError e) {
+            String log = SlothLog.text();
+            for (String line : log.split("\n")) {
+                if (line.contains("shell build failed") || line.contains("SET ASIDE") || line.contains("WARN")) {
+                    System.out.println("REPLAY " + line);
+                }
+            }
+            throw e;
+        }
+    }
+
+
+    /* --------------------------------------------------------------------------- leaks */
+
+    /** Every static field in the shell's classes that still reaches a View or an Activity. */
+    private static java.util.List<String> heldViews() throws Exception {
+        java.util.List<String> held = new java.util.ArrayList<>();
+        String[] names = {"SlothShell", "SlothLoad", "SlothPages", "SlothSheet", "SlothBoard",
+                "SlothTopBar", "SlothStrip", "SlothLibrary", "SlothSettings", "SlothFind", "SlothDiag",
+                "SlothCover", "SlothPickers", "SlothBackdrop", "SlothLog", "SlothPrefs", "SlothTheme",
+                "SlothFirstRun", "SlothIcons", "SlothGrid", "SlothBar", "SlothDrag", "SlothSheetScroll"};
+        for (String name : names) {
+            Class<?> type;
+            try {
+                type = Class.forName("com.sloth.browser." + name);
+            } catch (ClassNotFoundException e) {
+                continue;
+            }
+            for (java.lang.reflect.Field f : type.getDeclaredFields()) {
+                if (!java.lang.reflect.Modifier.isStatic(f.getModifiers()) || f.getType().isPrimitive()) {
+                    continue;
+                }
+                f.setAccessible(true);
+                Object value = f.get(null);
+                String found = reaches(value, 0);
+                if (found != null) {
+                    held.add(name + "." + f.getName() + " -> " + found);
+                }
+            }
+        }
+        return held;
+    }
+
+    private static String reaches(Object value, int depth) {
+        if (value == null || depth > 2) {
+            return null;
+        }
+        if (value instanceof java.lang.ref.Reference) {
+            return null;
+        }
+        if (value instanceof View || value instanceof Activity) {
+            return value.getClass().getSimpleName();
+        }
+        if (value instanceof java.util.WeakHashMap) {
+            return null;
+        }
+        if (value instanceof java.util.Map) {
+            for (Object entry : ((java.util.Map<?, ?>) value).entrySet()) {
+                java.util.Map.Entry<?, ?> e = (java.util.Map.Entry<?, ?>) entry;
+                String k = reaches(e.getKey(), depth + 1);
+                if (k != null) {
+                    return "a key " + k;
+                }
+                String v = reaches(e.getValue(), depth + 1);
+                if (v != null) {
+                    return "a value " + v;
+                }
+            }
+        } else if (value instanceof Iterable) {
+            for (Object item : (Iterable<?>) value) {
+                String hit = reaches(item, depth + 1);
+                if (hit != null) {
+                    return "an item " + hit;
+                }
+            }
+        }
+        return null;
+    }
+
+    /** A released window leaves nothing of itself in the shell's statics. */
+    @Test
+    public void aReleasedWindowLeavesNoViewsBehind() throws Exception {
+        TestActivity activity = build();
+        addTabs(activity, "Docs", "Mail");
+        org.mozilla.geckoview.GeckoSession session = pageWithSession(activity);
+        SlothShell.own(activity);
+        settle();
+        SlothShell.tick();
+        SlothShell.openSettingsPage(activity);
+        settle();
+        SlothShell.openFind(activity);
+        settle();
+        SlothShell.openWidgetChooser(activity);
+        settle();
+        session.getProgressDelegate().onPageStart(session, "https://example.org/");
+        SlothShell.releaseShellForTest();
+        java.util.List<String> held = heldViews();
+        assertTrue("still held after release:\n" + String.join("\n", held), held.isEmpty());
+    }
+
+    /** After a rotation the old window can be collected: nothing of ours keeps it alive. */
+    @Test
+    public void anOldWindowIsFreedAfterARotation() throws Exception {
+        java.lang.ref.WeakReference<Activity> old;
+        {
+            TestActivity first = build();
+            addTabs(first, "Docs", "Mail");
+            pageWithSession(first);
+            SlothShell.own(first);
+            settle();
+            SlothShell.tick();
+            SlothShell.openDiagPage(first);
+            settle();
+            old = new java.lang.ref.WeakReference<Activity>(first);
+        }
+        org.robolectric.android.controller.ActivityController<TestActivity> going = lastBuilt;
+        TestActivity second = build();
+        SlothShell.own(second);
+        // Android destroys the rotated-away window; the shell must not be what keeps it
+        going.destroy();
+        going = null;
+        settle();
+        SlothShell.tick();
+        for (int i = 0; i < 6 && old.get() != null; i++) {
+            System.gc();
+            System.runFinalization();
+            settle();
+        }
+        Activity stuck = old.get();
+        assertNull("the rotated-away window is still reachable: " + (stuck == null ? ""
+                : pathTo(stuck)), stuck);
+    }
+
+    /** A chain of references from a static field, or the main looper's queue, to the target. */
+    private static String pathTo(Object target) throws Exception {
+        java.util.IdentityHashMap<Object, String> seen = new java.util.IdentityHashMap<>();
+        java.util.ArrayDeque<Object[]> queue = new java.util.ArrayDeque<>();
+        String[] roots = {"SlothShell", "SlothLoad", "SlothPages", "SlothSheet", "SlothBoard",
+                "SlothTopBar", "SlothStrip", "SlothLibrary", "SlothSettings", "SlothFind", "SlothDiag",
+                "SlothCover", "SlothPickers", "SlothBackdrop", "SlothLog", "SlothPrefs", "SlothTheme",
+                "SlothFirstRun", "SlothUi", "SlothDrawer", "SlothPlate", "DrawerFace"};
+        for (String name : roots) {
+            try {
+                Class<?> type = Class.forName("com.sloth.browser." + name);
+                for (java.lang.reflect.Field f : type.getDeclaredFields()) {
+                    if (java.lang.reflect.Modifier.isStatic(f.getModifiers()) && !f.getType().isPrimitive()) {
+                        f.setAccessible(true);
+                        Object v = f.get(null);
+                        if (v != null) {
+                            queue.add(new Object[]{v, name + "." + f.getName()});
+                        }
+                    }
+                }
+            } catch (Throwable ignored) {
+                // not loaded in this run
+            }
+        }
+        queue.add(new Object[]{android.os.Looper.getMainLooper(), "main looper"});
+        int visited = 0;
+        while (!queue.isEmpty() && visited < 400000) {
+            Object[] item = queue.removeFirst();
+            Object o = item[0];
+            String path = (String) item[1];
+            if (o == null || seen.containsKey(o)) {
+                continue;
+            }
+            seen.put(o, path);
+            visited++;
+            if (o == target) {
+                return path;
+            }
+            Class<?> type = o.getClass();
+            if (type.isArray()) {
+                if (!type.getComponentType().isPrimitive()) {
+                    Object[] arr = (Object[]) o;
+                    for (int i = 0; i < arr.length; i++) {
+                        if (arr[i] != null) {
+                            queue.add(new Object[]{arr[i], path + "[" + i + "]"});
+                        }
+                    }
+                }
+                continue;
+            }
+            if (o instanceof Class || o instanceof String || o instanceof Number) {
+                continue;
+            }
+            for (Class<?> t = type; t != null && t != Object.class; t = t.getSuperclass()) {
+                for (java.lang.reflect.Field f : t.getDeclaredFields()) {
+                    if (java.lang.reflect.Modifier.isStatic(f.getModifiers()) || f.getType().isPrimitive()) {
+                        continue;
+                    }
+                    if (java.lang.ref.Reference.class.isAssignableFrom(t) && f.getName().equals("referent")) {
+                        continue;
+                    }
+                    try {
+                        f.setAccessible(true);
+                        Object v = f.get(o);
+                        if (v != null && !seen.containsKey(v)) {
+                            queue.add(new Object[]{v, path + " > " + t.getSimpleName() + "." + f.getName()});
+                        }
+                    } catch (Throwable ignored) {
+                        // a field the module system will not open
+                    }
+                }
+            }
+        }
+        return "no path from the shell's statics or the main looper (searched " + visited + " objects)";
     }
 
     /** The shell's own gesture, the one every surface reports into. */
