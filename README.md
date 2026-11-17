@@ -99,7 +99,7 @@ Written down because each one cost a shipped build:
 ## Tests
 
 `tests/` is a Robolectric harness that renders the shell on the JVM in native graphics mode and
-asserts behaviour rather than pixels: 253 tests at the last build, including the drag, the peek
+asserts behaviour rather than pixels: 259 tests at the last build, including the drag, the peek
 hysteresis, the settings bindings, the diagnostics report, the back order and the drawn icons.
 
 ```sh

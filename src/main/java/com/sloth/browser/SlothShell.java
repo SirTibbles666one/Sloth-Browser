@@ -520,6 +520,7 @@ public final class SlothShell {
         lastProbe = 0;
         SlothCover.forget();
         SlothLoad.forget();
+        SlothPages.clear();
         onboardingFinished = false;
         syncPosted = false;
         synced = "";
@@ -779,6 +780,7 @@ public final class SlothShell {
                 if (widgetSheet != null) {
                     widgetSheet.bringToFront();
                     widgetSheet.setVisibility(View.VISIBLE);
+                    SlothPages.opened(widgetLayer());
                 }
             }
         });
@@ -1284,6 +1286,14 @@ public final class SlothShell {
         }
         page.bringToFront();
         page.setVisibility(View.VISIBLE);
+        SlothPages.opened(layer("the library", page, false, new Runnable() {
+            @Override
+            public void run() {
+                if (libraryPage != null) {
+                    libraryPage.setVisibility(View.GONE);
+                }
+            }
+        }));
         SlothLog.note("library opened: " + kind);
     }
 
@@ -1756,6 +1766,44 @@ public final class SlothShell {
     }
 
     /**
+     * A layer for the page stack. It is showing while it is this window's, visible, and -
+     * for a list that lives in the drawer - while the drawer is open around it.
+     */
+    private static SlothPages.Layer layer(final String name, final View view,
+                                          final boolean inDrawer, final Runnable close) {
+        return new SlothPages.Layer() {
+            @Override
+            public String name() {
+                return name;
+            }
+
+            @Override
+            public boolean showing() {
+                return view != null && view.getContext() == owner
+                        && view.getParent() != null && view.getVisibility() == View.VISIBLE
+                        && (!inDrawer || (drawer != null && drawer.getLayoutParams() != null
+                        && drawer.getLayoutParams().height > 0));
+            }
+
+            @Override
+            public void close() {
+                close.run();
+            }
+        };
+    }
+
+    private static SlothPages.Layer widgetLayer() {
+        return layer("the widget list", widgetSheet, true, new Runnable() {
+            @Override
+            public void run() {
+                if (widgetSheet != null) {
+                    widgetSheet.setVisibility(View.GONE);
+                }
+            }
+        });
+    }
+
+    /**
      * Close one thing of ours, in the order a person would expect: the page on top, then
      * the drawer. False means nothing of ours is open.
      */
@@ -1767,6 +1815,11 @@ public final class SlothShell {
         if (settingsPage != null && settingsPage.getContext() != activity) {
             settingsPage = null;
         }
+        // the most recent layer first: the order they were opened in, not a fixed one
+        if (SlothPages.closeTop()) {
+            return true;
+        }
+        // a layer shown without going through its opener still closes, in the old order
         if (diagPage != null && diagPage.getVisibility() == View.VISIBLE) {
             diagPage.setVisibility(View.GONE);
             SlothLog.note("back closed diagnostics");
@@ -1959,6 +2012,14 @@ public final class SlothShell {
         diagPage = fresh;
         fresh.bringToFront();
         fresh.setVisibility(View.VISIBLE);
+        SlothPages.opened(layer("diagnostics", fresh, false, new Runnable() {
+            @Override
+            public void run() {
+                if (diagPage != null) {
+                    diagPage.setVisibility(View.GONE);
+                }
+            }
+        }));
         SlothCover.probe(activity, "diagnostics opened");
     }
 
@@ -1987,6 +2048,7 @@ public final class SlothShell {
             // and this is the number that says which
             // the events keep the bar current; the tick only checks. Every change it still
             // finds is one the events missed, and this is the number that says how many
+            out.append("layers: ").append(SlothPages.describe()).append('\n');
             out.append("sync: ").append(syncsForTest).append(" syncs, ").append(backstopCatches)
                     .append(" changes caught by the backstop tick\n");
             out.append("drag: ").append(dragWrites).append(" sheet writes, ")
@@ -2030,6 +2092,15 @@ public final class SlothShell {
         }
         page.bringToFront();
         page.setVisibility(View.VISIBLE);
+        SlothPages.opened(layer("settings", page, false, new Runnable() {
+            @Override
+            public void run() {
+                if (settingsPage != null) {
+                    settingsPage.setVisibility(View.GONE);
+                }
+                checkLayers("back closed settings");
+            }
+        }));
         checkLayers("opened settings");
     }
 
@@ -2043,6 +2114,12 @@ public final class SlothShell {
         placeFind();
         findBar.bringToFront();
         findBar.setVisibility(View.VISIBLE);
+        SlothPages.opened(layer("find", findBar, false, new Runnable() {
+            @Override
+            public void run() {
+                closeFind(activity);
+            }
+        }));
         View field = findBar.findFocus() == null ? null : findBar.findFocus();
         View input = field;
         if (input == null) {
@@ -2391,6 +2468,14 @@ public final class SlothShell {
         if (paletteSheet != null) {
             paletteSheet.bringToFront();
             paletteSheet.setVisibility(View.VISIBLE);
+            SlothPages.opened(layer("the palette list", paletteSheet, true, new Runnable() {
+                @Override
+                public void run() {
+                    if (paletteSheet != null) {
+                        paletteSheet.setVisibility(View.GONE);
+                    }
+                }
+            }));
             checkLayers("opened the palette list");
         }
     }
@@ -2400,6 +2485,7 @@ public final class SlothShell {
         if (widgetSheet != null) {
             widgetSheet.bringToFront();
             widgetSheet.setVisibility(View.VISIBLE);
+            SlothPages.opened(widgetLayer());
             checkLayers("opened the widget list");
         }
     }
