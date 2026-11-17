@@ -452,16 +452,33 @@ final class SlothTopBar {
             siteIcon.setContentDescription("Search");
             return;
         }
-        boolean secure = secure(text);
+        boolean secure = secure(text, field != null && field.hasFocus());
         siteIcon.tint(secure ? SlothTheme.dim() : 0xFFE2A05A);
         siteIcon.setContentDescription(secure
                 ? "Site settings, secure connection"
                 : "Site settings, not a secure address");
     }
 
+    /** {@link #secure(String, boolean)} for a page that is showing. */
     static boolean secure(String url) {
+        return secure(url, false);
+    }
+
+    /**
+     * Whether the padlock says the connection is secure. {@code https} and {@code about:}
+     * are; an explicit {@code http} address is not. The browser's own field drops the
+     * scheme once a page is showing, so a host on its own is that display, not a typed
+     * insecure address - while it is being typed there is no page yet to vouch for.
+     */
+    static boolean secure(String url, boolean editing) {
         String u = url == null ? "" : url.trim().toLowerCase(java.util.Locale.UK);
-        return u.startsWith("https://") || u.startsWith("about:") || u.length() == 0;
+        if (u.length() == 0 || u.startsWith("https://") || u.startsWith("about:")) {
+            return true;
+        }
+        if (u.startsWith("http://")) {
+            return false;
+        }
+        return !editing && SlothShell.looksLikeAddress(u);
     }
 
     private boolean copy(CharSequence value) {

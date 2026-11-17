@@ -113,6 +113,7 @@ final class SlothPrefs {
         try {
             java.lang.reflect.Field f = field(s, field);
             Class<?> type = f.getType();
+            Object before = f.get(s);
             if (value instanceof Boolean && (type == boolean.class || type == Boolean.class)) {
                 f.setBoolean(s, (Boolean) value);
             } else if (value instanceof Integer && (type == int.class || type == Integer.class)) {
@@ -128,7 +129,17 @@ final class SlothPrefs {
                         new IllegalArgumentException(type.getName()));
                 return false;
             }
-            return SlothShell.saveSettings(activity);
+            if (SlothShell.saveSettings(activity)) {
+                return true;
+            }
+            // the field moved and the save did not. Leaving it there makes the next
+            // read disagree with the row, which still shows the old value
+            try {
+                f.set(s, before);
+            } catch (Throwable restore) {
+                report("restoring ", field, restore);
+            }
+            return false;
         } catch (Throwable t) {
             report("writing ", field, t);
             return false;

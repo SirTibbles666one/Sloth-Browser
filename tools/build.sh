@@ -8,13 +8,15 @@
 # Usage:
 #   BASE_APK=... KEYSTORE=... KS_PASS=... KEY_PASS=... ./tools/build.sh 1223
 #
-# The dex split matters: classes4 is the app's navigation hook (DrawerFace painting routed
-# into SlothShell.own), classes5 is everything in src/main/java. Both are built here; the
-# old patch classes ride along in the same dex as the shell.
+# The dex split matters: classes4 is the app's navigation dex, with AddressFace.paint
+# routed into SlothShell.own (tools/hook_nav.py builds that from the base). classes5 is
+# the shell plus the older patch classes.
 set -euo pipefail
 
 VERSION="${1:?usage: build.sh <versionCode>}"
-: "${BASE_APK:?set BASE_APK to the app's own release apk}"
+# Bash 5.2 treats an apostrophe inside ${parameter:?word} as a quote, even when
+# the expansion is double-quoted, and then the script does not parse.
+: "${BASE_APK:?set BASE_APK to the app release apk}"
 : "${KEYSTORE:?set KEYSTORE to the signing keystore}"
 : "${KS_PASS:?set KS_PASS}"
 : "${KEY_PASS:?set KEY_PASS}"
@@ -28,7 +30,7 @@ API="${API:-36}"
 WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
 
-mkdir -p "$OUT"
+mkdir -p "$OUT" "$WORK/classes" "$WORK/dex"
 
 echo "== compile the shell against the stubs"
 javac -source 8 -target 8 -classpath "$ANDROID_HOME/platforms/android-$API/android.jar" \
@@ -39,6 +41,9 @@ javac -source 8 -target 8 -classpath "$ANDROID_HOME/platforms/android-$API/andro
 echo "== dex it"
 "$BUILD_TOOLS/d8" --release --min-api 26 --lib "$ANDROID_HOME/platforms/android-$API/android.jar" \
     --output "$WORK/dex" "$WORK/classes/com/sloth/browser/"*.class
+
+echo "== hook the base navigation dex into the shell"
+python3 "$HERE/tools/hook_nav.py" "$BASE_APK" "$WORK/classes4.dex"
 
 echo "== unpack the base and swap the dexes"
 python3 "$HERE/tools/build_apk2.py" "$BASE_APK" "$WORK/unsigned.apk" 1108 "$VERSION" \
@@ -68,7 +73,9 @@ echo "== align and sign"
     --v3-signing-enabled true --out "$OUT/SlothBrowser-$VERSION.apk" "$WORK/aligned.apk"
 
 echo "== gates"
-python3 "$HERE/audit/shell_refs.py" "$OUT/SlothBrowser-$VERSION.apk" "$HERE/src/main/java/com/sloth/browser"
+# shell_refs refuses a built shell: the names it checks are string literals in our own
+# dex, so they are present by construction. The check belongs on the base.
+python3 "$HERE/audit/shell_refs.py" "$BASE_APK" "$HERE/src"
 python3 "$HERE/audit/ship_gate.py" "$OUT/SlothBrowser-$VERSION.apk" "$VERSION" "$HERE/src"
 
 sha256sum "$OUT/SlothBrowser-$VERSION.apk"

@@ -3275,6 +3275,11 @@ public final class SlothShell {
         }
     }
 
+    /** Status bar plus the floating bar, so a full-screen page can start below both. */
+    static int topChromePx(Activity activity) {
+        return statusBarHeight(activity) + dp(activity, 72);
+    }
+
     private static int statusBarHeight(Activity activity) {
         try {
             android.view.WindowInsets insets = activity.getWindow().getDecorView().getRootWindowInsets();
