@@ -40,3 +40,15 @@ Honesty rules for the note:
   the previous note was false" is the correct sentence when that is what happened.
 * If a claim cannot be verified here - anything about how it feels in the hand, anything about
   the system's elevation shadows, anything the harness cannot paint - say that in the note.
+
+## A new base
+
+The base is the app's own build before any shell: the published 1108 release, pinned by
+sha256 in `tools/build.sh` and in the `reflective names` CI job. A newer engine means a new
+base, and it is a deliberate change:
+
+1. Record the new base's sha256 and its GeckoView version here.
+2. Change the pin in `tools/build.sh` and `.github/workflows/gates.yml` in the same PR.
+3. The `reflective names` job must pass against it: every name the shell reaches for by
+   reflection has to exist in the new app.
+4. Build, run the ship gate, and check the release on a phone before publishing.
