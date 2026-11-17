@@ -116,6 +116,14 @@ final class SlothSettings {
                 SlothShell.openPalettePicker(activity);
             }
         });
+        row(activity, column, "Drawer", drawerMode(activity), new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                String was = drawerMode(activity);
+                SlothShell.setDrawerOverPage(activity, !SlothShell.drawerOverPage(activity));
+                relabel(v, was, drawerMode(activity));
+            }
+        });
         row(activity, column, "Widgets on the drawer", "choose what the drawer holds",
                 new View.OnClickListener() {
                     @Override
@@ -446,6 +454,23 @@ final class SlothSettings {
             }
         }
         return null;
+    }
+
+    private static String drawerMode(Activity activity) {
+        return SlothShell.drawerOverPage(activity) ? "Covers the page" : "Pushes the page down";
+    }
+
+    /** Swap one piece of text inside a row for another, where the row shows its value. */
+    private static void relabel(View view, String was, String now) {
+        if (view instanceof TextView && was.contentEquals(((TextView) view).getText())) {
+            ((TextView) view).setText(now);
+            return;
+        }
+        if (view instanceof ViewGroup) {
+            for (int i = 0; i < ((ViewGroup) view).getChildCount(); i++) {
+                relabel(((ViewGroup) view).getChildAt(i), was, now);
+            }
+        }
     }
 
     /** A row that calls one of the browser's private methods. */

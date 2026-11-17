@@ -509,6 +509,7 @@ public final class SlothShell {
         SlothCover.forget();
         SlothLoad.forget();
         SlothPages.clear();
+        overPage = null;
         onboardingFinished = false;
         syncPosted = false;
         synced = "";
@@ -2696,6 +2697,46 @@ public final class SlothShell {
         alignPageToBar(activity, drawerHeight, dragging() || animating());
     }
 
+    /** The shell's own settings, apart from the app's: an app update cannot clear them. */
+    static final String SHELL_PREFS = "sloth_shell";
+
+    /** Cached, because alignPageToBar asks on every frame of a drag. */
+    private static Boolean overPage;
+
+    /**
+     * Whether the drawer opens over the page instead of pushing it down.
+     *
+     * <p>Over the page, the page sits under the bar and stays there: opening and shutting the
+     * drawer moves nothing under it and lays nothing out again. It is the app's own rule ("the
+     * drawer pulls down over the page") and the model Mozilla recommends for a toolbar over
+     * GeckoView. Off by default until it has been tried on a phone.</p>
+     */
+    static boolean drawerOverPage(Activity activity) {
+        if (overPage == null) {
+            try {
+                overPage = activity.getSharedPreferences(SHELL_PREFS, Context.MODE_PRIVATE)
+                        .getBoolean("drawerOverPage", false);
+            } catch (Throwable t) {
+                SlothLog.swallow("SlothShell.drawerOverPage", t);
+                return false;
+            }
+        }
+        return overPage;
+    }
+
+    /** Switch it, and put the page where the new mode wants it at once. */
+    static void setDrawerOverPage(Activity activity, boolean on) {
+        overPage = on;
+        try {
+            activity.getSharedPreferences(SHELL_PREFS, Context.MODE_PRIVATE).edit()
+                    .putBoolean("drawerOverPage", on).apply();
+        } catch (Throwable t) {
+            SlothLog.swallow("SlothShell.setDrawerOverPage", t);
+        }
+        SlothLog.note(on ? "the drawer opens over the page" : "the drawer pushes the page down");
+        alignPageToBar(activity, drawer == null ? 0 : drawer.getLayoutParams().height, false);
+    }
+
     /**
      * Put the page under the bar.
      *
@@ -2711,11 +2752,18 @@ public final class SlothShell {
         if (appRoot == null || surfaceView == null || appRootPadTop < 0) {
             return;
         }
+        if (drawerOverPage(activity)) {
+            // the drawer opens over the page: the page sits under the bar alone, and neither
+            // moves nor is laid out again while the drawer does
+            drawerHeight = 0;
+            live = false;
+        }
         int[] surfaceAt = new int[2];
         int[] rootAt = new int[2];
         surfaceView.getLocationOnScreen(surfaceAt);
         appRoot.getLocationOnScreen(rootAt);
-        int surfaceBottom = surfaceAt[1] + surfaceView.getHeight();
+        int surfaceBottom = drawerOverPage(activity) && surfaceBarPx > 0
+                ? surfaceAt[1] + surfaceBarPx : surfaceAt[1] + surfaceView.getHeight();
         if (surfaceView.getHeight() <= 0 || appRoot.getTop() < 0) {
             // not laid out yet: the bar's own height is the best figure available, and the
             // measured one replaces it on the next frame
