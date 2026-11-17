@@ -187,32 +187,13 @@ public final class SlothShell {
     /** One drag for the strip and everything on it, so it starts wherever the finger lands. */
     private static SlothDrag stripDrag;
     private static View barWrapView;
-    private static float downY;
-    private static float startH;
-    private static boolean dragging;
+    /** How the drawer moves: drag, release, settle. One per window. */
+    private static SlothSheet sheet;
     /** The union's own state, so a drag does not re-allocate its backgrounds per frame. */
     private static boolean unionOpen;
-    /** A drag collects moves and applies the latest one once per main-loop turn. */
-    private static int dragPending = Integer.MIN_VALUE;
-    private static boolean dragPosted;
     /** Counters for the diagnostics line: how much work a drag actually did. */
     private static int dragWrites;
     private static int pageRelayouts;
-    /**
-     * The last drag, kept as numbers.
-     *
-     * <p>"It still feels wrong" is the most expensive report this project gets: every one of
-     * them cost a build and a guess, because a drag exists only while a finger is on the
-     * glass. These are the figures that describe one - where it started, how many moves were
-     * applied, where it was released, how fast, and which seat it chose.</p>
-     */
-    private static int traceFrom = -1;
-    private static int traceTo = -1;
-    private static int traceMoves;
-    private static int tracePeak;
-    private static float traceVelocity;
-    private static boolean traceFlicked;
-    private static long traceMs;
 
     /**
      * Which shell an animation belongs to.
@@ -229,8 +210,15 @@ public final class SlothShell {
         return gen;
     }
 
-    /** True while frames are still being posted, so the tidy-up does not fight them. */
-    private static boolean animating;
+    /** A finger is on the sheet. */
+    private static boolean dragging() {
+        return sheet != null && sheet.dragging();
+    }
+
+    /** A settle is carrying the sheet to a seat. */
+    private static boolean animating() {
+        return sheet != null && sheet.animating();
+    }
 
     /* ---------------------------------------------------------------- helpers */
     private static int dp(Context c, float v) {
@@ -493,12 +481,11 @@ public final class SlothShell {
         lastSeat = -1;
         expandedPx = 0;
         measuredContentH = 0;
-        dragging = false;
+        if (sheet != null) {
+            sheet.dispose();
+            sheet = null;
+        }
         unionOpen = false;
-        dragPending = Integer.MIN_VALUE;
-        dragPosted = false;
-        downY = 0;
-        startH = 0;
         chromeFade = 1f;
         // the peek and the painted scene came later; the release has to keep up with them
         stripDrag = null;
@@ -516,7 +503,6 @@ public final class SlothShell {
         edgeChecked = false;
         // frames already posted check this before touching the tree
         gen++;
-        animating = false;
         lastProbe = 0;
         SlothCover.forget();
         SlothLoad.forget();
@@ -561,7 +547,10 @@ public final class SlothShell {
             owner = activity;
             // a new shell means new views: anything still animating belongs to the old ones
             gen++;
-            animating = false;
+            if (sheet != null) {
+                sheet.dispose();
+                sheet = null;
+            }
             // measured before anything is built: the scrim, the surface's top gap and the
             // find bar are all placed from it, and a zero here put find over the bar
             statusInset = statusBarHeight(activity);
@@ -594,6 +583,7 @@ public final class SlothShell {
             SlothBar barWrap = buildBar(activity, shellDrag);
             column.addView(barWrap);
             drawer = buildDrawer(activity, shellDrag);
+            sheet = new SlothSheet(drawer, sheetHost(activity));
             column.addView(drawer);
             buildPages(activity, root);
             seatSurface(activity, surface, barWrap);
@@ -768,7 +758,7 @@ public final class SlothShell {
             public void run() {
                 // the widgets folded or unfolded: a drawer at the top grows or shrinks with
                 // them, so the shelf never opens under the bottom edge
-                if (drawer != null && !dragging
+                if (drawer != null && !dragging()
                         && drawer.getLayoutParams().height > peekPx + dp(activity, 8)) {
                     animateTo(activity, fullSeat(activity));
                 }
@@ -816,50 +806,15 @@ public final class SlothShell {
     return new SlothBar.Listener() {
             @Override
             public void onDragStart(float y, float carry) {
-                // a flick may still be flying when the finger lands. Two writers to the
-                // same height is the drawer fighting the hand that grabbed it
-                animating = false;
-                gen++;
-                downY = y;
-                int h = drawer == null ? 0 : drawer.getLayoutParams().height;
-                // the sheet is under the finger: it takes up the travel spent claiming
-                // the gesture, so nothing lurches when the drag begins
-                startH = Math.max(0, h + Math.round(carry));
-                dragging = true;
-                traceFrom = h;
-                tracePeak = Math.round(startH);
-                traceMoves = 0;
-                traceVelocity = 0f;
-                traceTo = -1;
-                traceFlicked = false;
-                traceMs = android.os.SystemClock.uptimeMillis();
+                if (sheet != null) {
+                    sheet.grab(carry);
+                }
             }
 
             @Override
             public void onDrag(float dy) {
-                if (drawer == null) {
-                    return;
-                }
-                // a digitiser can deliver two moves before a frame is drawn. Keep the
-                // newest and apply it once per loop turn: the sheet still sits under the
-                // finger, and the tree is measured once instead of twice
-                dragPending = (int) Math.max(0,
-                        Math.min(startH + dy, fullHeight(activity)));
-                if (!dragPosted) {
-                    dragPosted = true;
-                    MAIN.post(new Runnable() {
-                        @Override
-                        public void run() {
-                            dragPosted = false;
-                            if (dragging && dragPending != Integer.MIN_VALUE) {
-                                int h = dragPending;
-                                dragPending = Integer.MIN_VALUE;
-                                traceMoves++;
-                                tracePeak = h;
-                                setDrawerHeight(activity, h);
-                            }
-                        }
-                    });
+                if (drawer != null && sheet != null) {
+                    sheet.move(dy);
                 }
             }
 
@@ -870,28 +825,9 @@ public final class SlothShell {
 
             @Override
             public void onRelease(float velocity) {
-                // only the view that claimed the drag may end it. A scrollable child
-                // reporting its own release used to settle a sheet nobody had touched,
-                // which is one way the drawer appeared to shut itself
-                if (!dragging) {
-                    return;
+                if (sheet != null) {
+                    sheet.release(velocity);
                 }
-                // whatever the last turn had not applied yet, applied now, so the settle
-                // starts from where the finger left the sheet and not one frame behind it
-                if (dragPending != Integer.MIN_VALUE) {
-                    int h = Math.max(0, Math.min(dragPending, fullHeight(activity)));
-                    dragPending = Integer.MIN_VALUE;
-                    setDrawerHeight(activity, h);
-                }
-                dragging = false;
-                traceVelocity = velocity;
-                traceFlicked = Math.abs(velocity) > 0.55f;
-                traceMs = android.os.SystemClock.uptimeMillis() - traceMs;
-                // the commit: the page takes its real offset once, now that the finger is up
-                if (appRootPadTop >= 0) {
-                    alignPageToBar(activity, drawer == null ? 0 : drawer.getLayoutParams().height, false);
-                }
-                finishDrag(activity, velocity);
             }
 
             @Override
@@ -1444,7 +1380,9 @@ public final class SlothShell {
         }
         overlay = null;
         gen++;
-        animating = false;
+        if (sheet != null) {
+            sheet.dispose();
+        }
         stopLoops();
         own(activity);
     }
@@ -1457,6 +1395,9 @@ public final class SlothShell {
         openIntent = false;
         // anything still travelling was travelling somewhere else
         gen++;
+        if (sheet != null) {
+            sheet.stop();
+        }
         if (drawer != null && drawer.getLayoutParams().height > 0) {
             setDrawerHeight(activity, 0);
         }
@@ -1896,8 +1837,7 @@ public final class SlothShell {
 
     /** The last drag as a line of numbers, for the harness and for me. */
     static String dragTraceForTest() {
-        return traceFrom + "->" + tracePeak + " moves=" + traceMoves + " v=" + traceVelocity
-                + " seat=" + traceTo + " ms=" + traceMs + " by=" + dragSource;
+        return sheet == null ? "no sheet" : sheet.trace(dragSource);
     }
 
     /** How many times the page root has been re-laid-out, for the harness. */
@@ -2053,12 +1993,7 @@ public final class SlothShell {
                     .append(" changes caught by the backstop tick\n");
             out.append("drag: ").append(dragWrites).append(" sheet writes, ")
                     .append(pageRelayouts).append(" page relayouts, since the app started\n");
-            out.append("last drag: ").append(traceFrom < 0 ? "none yet"
-                            : traceFrom + " -> " + tracePeak + "px in " + traceMoves
-                            + " moves, " + traceMs + "ms, released at "
-                            + Math.round(traceVelocity * 1000) + "px/s"
-                            + (traceFlicked ? " (flick)" : " (slow)")
-                            + ", settled at " + traceTo + "px")
+            out.append("last drag: ").append(sheet == null ? "none yet" : sheet.describe())
                     .append('\n');
             View url = resolve(activity, "urlBar");
             out.append("url: ").append(url instanceof TextView
@@ -2712,7 +2647,7 @@ public final class SlothShell {
     }
 
     static void alignPageToBar(Activity activity, int drawerHeight) {
-        alignPageToBar(activity, drawerHeight, dragging || animating);
+        alignPageToBar(activity, drawerHeight, dragging() || animating());
     }
 
     /**
@@ -2836,7 +2771,7 @@ public final class SlothShell {
         // not while a settle is running either: an animation to the full seat would be capped
         // back to the content height on its own frames, which is how a full pull ended up with
         // the panel dropping back down onto the tab strip
-        if (h > 0 && measuredContentH > 0 && !peekShowing && !dragging && !animating) {
+        if (h > 0 && measuredContentH > 0 && !peekShowing && !dragging() && !animating()) {
             // a sheet does not need to be taller than what it holds - the light render
             // showed the drawer stretched past its content into a band of empty paper
             // a little air under the last row, not a band: the panel must not open taller
@@ -2942,68 +2877,11 @@ public final class SlothShell {
                 }
             });
         }
-        if (motionOff(activity) || from == target) {
-            drawer.setAlpha(1f);
-            drawer.setTranslationY(0);
+        if (sheet == null) {
             setDrawerHeight(activity, target);
             return;
         }
-        drawer.setVisibility(View.VISIBLE);
-        drawer.setAlpha(1f);
-        drawer.setTranslationY(0);
-        // A 500dp drop and a 40dp nudge cannot take the same time, and a frame count
-        // cannot either: at 16 ms a frame the snap stretched whenever the phone dropped
-        // one, which read as the settle stuttering. The duration is in milliseconds and
-        // the progress is read from the clock, so a slow frame skips ahead instead of
-        // stretching the animation.
-        int distance = Math.abs(target - from);
-        final int duration = Math.max(120, Math.min(260,
-                Math.round(120 + distance * 0.35f)));
-        final int delta = target - from;
-        final boolean opening = from < dp(activity, 8);
-        if (opening) {
-            // content settles in behind the sheet rather than snapping into place
-            drawer.setAlpha(0.85f);
-            drawer.setTranslationY(dp(activity, 10));
-        }
-        final int mine = gen;
-        animating = true;
-        final long started = android.os.SystemClock.uptimeMillis();
-        MAIN.post(new Runnable() {
-            @Override
-            public void run() {
-                if (mine != gen) {
-                    // the shell moved on mid-flight: leave nothing half-transparent behind
-                    if (drawer != null) {
-                        drawer.setAlpha(1f);
-                        drawer.setTranslationY(0);
-                    }
-                    if (appRoot != null) {
-                        appRoot.setAlpha(1f);
-                    }
-                    animating = false;
-                    return;
-                }
-                long now = android.os.SystemClock.uptimeMillis();
-                float t = Math.min(1f, (now - started) / (float) duration);
-                float eased = 1f - (1f - t) * (1f - t);
-                setDrawerHeight(activity, from + Math.round(delta * eased));
-                if (opening) {
-                    drawer.setAlpha(0.85f + 0.15f * eased);
-                    drawer.setTranslationY(dp(activity, Math.round(10 * (1f - eased))));
-                }
-                if (t < 1f) {
-                    MAIN.postDelayed(this, 16);
-                } else {
-                    animating = false;
-                    // the settle's last word: the page takes its exact offset and the
-                    // translation that followed the sheet is cleared in one layout
-                    if (appRootPadTop >= 0) {
-                        alignPageToBar(activity, target, false);
-                    }
-                }
-            }
-        });
+        sheet.settle(target);
     }
 
     /**
@@ -3156,18 +3034,13 @@ public final class SlothShell {
      * three resting sizes, projected forward a little so it does not feel sticky.
      */
     private static void finishDrag(Activity activity, float velocity) {
-        if (drawer == null) {
-            return;
+        if (drawer != null && sheet != null) {
+            sheet.land(velocity);
         }
-        int h = drawer.getLayoutParams().height;
-        int peek = peekPx;
-        int full = fullSeat(activity);
+    }
 
-        // three seats: shut, the strip of tabs, the whole drawer
-        int[] seats = new int[]{0, peek, full};
-        int target = SlothSeats.choose(seats, h, velocity, peek, dp(activity, 8),
-                traceFrom >= full - dp(activity, 8));
-
+    /** A release chose a seat: a tick under the finger if it is a new one, then the settle. */
+    private static void landOn(Activity activity, int target) {
         // a seat change is worth a tick under the finger: the drag already ends where the
         // person meant, but without it the sheet appears to stop somewhere on its own
         if (target != lastSeat) {
@@ -3178,8 +3051,80 @@ public final class SlothShell {
                 // a device without haptics is not a fault
             }
         }
-        traceTo = target;
         animateTo(activity, target);
+    }
+
+    /** What the sheet asks of the shell. */
+    private static SlothSheet.Host sheetHost(final Activity activity) {
+        return new SlothSheet.Host() {
+            @Override
+            public int height() {
+                return drawer == null || drawer.getLayoutParams() == null
+                        ? 0 : drawer.getLayoutParams().height;
+            }
+
+            @Override
+            public void apply(int height) {
+                setDrawerHeight(activity, height);
+            }
+
+            @Override
+            public int limit() {
+                return fullHeight(activity);
+            }
+
+            @Override
+            public int[] seats() {
+                // three seats: shut, the strip of tabs, the whole drawer
+                return new int[]{0, peekPx, fullSeat(activity)};
+            }
+
+            @Override
+            public int peek() {
+                return peekPx;
+            }
+
+            @Override
+            public int slop() {
+                return dp(activity, 8);
+            }
+
+            @Override
+            public int px(int dp) {
+                return dp(activity, dp);
+            }
+
+            @Override
+            public boolean reducedMotion() {
+                return motionOff(activity);
+            }
+
+            @Override
+            public void released() {
+                if (appRootPadTop >= 0) {
+                    alignPageToBar(activity, height(), false);
+                }
+            }
+
+            @Override
+            public void landing(int target) {
+                landOn(activity, target);
+            }
+
+            @Override
+            public void settled(int target) {
+                if (appRootPadTop >= 0) {
+                    alignPageToBar(activity, target, false);
+                }
+            }
+
+            @Override
+            public void abandoned() {
+                if (appRoot != null) {
+                    appRoot.setAlpha(1f);
+                }
+            }
+        };
     }
 
     private static void collapse(Activity activity, String bindingName) {
@@ -3612,7 +3557,7 @@ public final class SlothShell {
             }
             if (!settingsOpen) {
                 freeLegacyPull(activity);
-                if (!dragging && !openIntent && drawer != null
+                if (!dragging() && !openIntent && drawer != null
                         && drawer.getVisibility() == View.VISIBLE
                         && drawer.getLayoutParams().height > 0) {
                     // nothing asked for the drawer to be open: a leftover height is debris
