@@ -52,3 +52,15 @@ base, and it is a deliberate change:
 3. The `reflective names` job must pass against it: every name the shell reaches for by
    reflection has to exist in the new app.
 4. Build, run the ship gate, and check the release on a phone before publishing.
+
+## Releasing from GitHub
+
+The `release` workflow does all of the above from the Actions tab: Actions > release >
+Run workflow, with the versionCode, whether it becomes the latest release, and a line of
+notes. It refuses a versionCode that is not higher than every release so far, runs the
+harness, builds from the pinned 1108 base, signs with the release key, runs the ship gate,
+and publishes the APK and version.json to Sloth-Browser-releases. A copy stays on the run.
+
+It needs four repository secrets: `RELEASE_KEYSTORE_B64` (the keystore, base64),
+`RELEASE_STORE_PASSWORD`, `RELEASE_KEY_PASSWORD`, and `RELEASES_TOKEN` (a fine-grained token
+with Contents read and write on Sloth-Browser-releases only).
