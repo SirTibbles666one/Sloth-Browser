@@ -6205,4 +6205,53 @@ public class SlothShellTest {
         assertEquals("sloth fa", field.getText().toString());
     }
 
+    /* ------------------------------------------------------------------------ first run */
+
+    /** The welcome screen is the app's. The shell does not draw over it. */
+    @Test
+    public void firstRunKeepsTheShellOutOfTheWay() {
+        TestActivity activity = build();
+        SlothShell.own(activity);
+        settle();
+        View surface = findByViewTag(overlayOf(activity), "surface");
+        assertEquals(View.VISIBLE, surface.getVisibility());
+
+        View welcome = new View(activity);
+        welcome.setTag("onboard");
+        ViewGroup window = activity.findViewById(android.R.id.content);
+        ((ViewGroup) window.getChildAt(0)).addView(welcome,
+                new ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT,
+                        ViewGroup.LayoutParams.MATCH_PARENT));
+        SlothShell.tick();
+        assertEquals("the shell steps aside while first run is up", View.GONE, surface.getVisibility());
+        SlothShell.openDrawer(activity);
+        assertEquals("and the drawer stays shut", 0, drawerOf(activity).getLayoutParams().height);
+
+        welcome.setVisibility(View.GONE);
+        SlothShell.tick();
+        assertEquals("once first run is gone the shell comes back", View.VISIBLE,
+                surface.getVisibility());
+    }
+
+    @Test
+    public void finishedOnboardingStopsTheFirstRunScan() {
+        TestActivity activity = build();
+        activity.settings.onboardingDone = true;
+        View welcome = new View(activity);
+        welcome.setTag("onboard");
+        ViewGroup window = activity.findViewById(android.R.id.content);
+        ((ViewGroup) window.getChildAt(0)).addView(welcome);
+        int before = SlothShell.firstRunScansForTest;
+
+        SlothShell.own(activity);
+        settle();
+        SlothShell.tick();
+        SlothShell.tick();
+
+        assertEquals("the welcome view is not consulted once the flag is set",
+                before, SlothShell.firstRunScansForTest);
+        assertEquals("and the shell stays up", View.VISIBLE,
+                findByViewTag(overlayOf(activity), "surface").getVisibility());
+    }
+
 }
