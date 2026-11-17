@@ -509,6 +509,8 @@ public final class SlothShell {
         SlothCover.forget();
         SlothLoad.forget();
         SlothPages.clear();
+        // the status band is a view of the window that is going: holding it holds the window
+        statusScrim = null;
         overPage = null;
         imeInset = 0;
         shrunkForKeyboard = false;
@@ -636,7 +638,8 @@ public final class SlothShell {
         } catch (Throwable t) {
             // a shell that failed half-way is worse than none: say why, and let the next
             // call build it again from nothing instead of reusing the pieces
-            SlothLog.warn("shell build failed: " + t);
+            SlothLog.warn("shell build failed: " + t + " at " + (t.getStackTrace().length > 0
+                    ? t.getStackTrace()[0] : "?"));
             if (DEBUG) {
                 t.printStackTrace();
             }
@@ -1515,8 +1518,19 @@ public final class SlothShell {
                 return "the settings page is covering a screen the app opened";
             }
             ViewGroup parent = (ViewGroup) settingsPage.getParent();
-            if (parent != null && parent.getChildAt(parent.getChildCount() - 1) != settingsPage) {
-                return "something is drawn over the settings page";
+            if (parent != null) {
+                // our own pages stack on Settings - Diagnostics and the library are opened from
+                // it, and Back returns to it. Anything else drawn over it is a fault
+                for (int i = parent.getChildCount() - 1; i >= 0; i--) {
+                    View above = parent.getChildAt(i);
+                    if (above == settingsPage) {
+                        break;
+                    }
+                    if (above.getVisibility() == View.VISIBLE && above != diagPage
+                            && above != libraryPage) {
+                        return "something is drawn over the settings page";
+                    }
+                }
             }
         }
         return null;
@@ -2089,6 +2103,12 @@ public final class SlothShell {
             return;
         }
         closeDrawerFor(activity);
+        // find searches the page: a page of ours covering it would hide every match
+        for (View cover : new View[]{settingsPage, libraryPage, diagPage}) {
+            if (cover != null && cover.getVisibility() == View.VISIBLE) {
+                cover.setVisibility(View.GONE);
+            }
+        }
         placeFind();
         findBar.bringToFront();
         findBar.setVisibility(View.VISIBLE);
@@ -3156,6 +3176,10 @@ public final class SlothShell {
             if (h > room) {
                 shrunkForKeyboard = true;
                 setDrawerHeight(activity, room);
+            } else if (h > peekPx + dp(activity, 8) && h != fullSeat(activity)) {
+                // the keyboard changed height while up - a suggestion strip came or went: an
+                // open drawer follows it rather than keeping the room the old keyboard left
+                setDrawerHeight(activity, fullSeat(activity));
             }
             MAIN.post(new Runnable() {
                 @Override
@@ -3168,10 +3192,13 @@ public final class SlothShell {
                     }
                 }
             });
-        } else if (shrunkForKeyboard) {
+        } else {
+            // whatever happened while the keyboard was up - the drawer shortened for it, or
+            // opened at the room it left - an open drawer goes back to its real top seat
             shrunkForKeyboard = false;
-            if (h > 0) {
-                animateTo(activity, fullSeat(activity));
+            int full = fullSeat(activity);
+            if (h > peekPx + dp(activity, 8) && h != full) {
+                animateTo(activity, full);
             }
         }
     }
