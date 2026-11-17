@@ -72,6 +72,8 @@ final class SlothLoad {
         try {
             session = SlothFind.session(activity);
         } catch (Throwable noEngine) {
+            // no page view: nothing is on screen, and an old session must not answer for it
+            showing = new WeakReference<>(null);
             return false;
         }
         boolean wrapped = attach(session);

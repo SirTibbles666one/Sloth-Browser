@@ -6252,6 +6252,9 @@ public class SlothShellTest {
         assertEquals("a new tab has nothing to show", "", SlothShell.addressFor("", "https://example.org/"));
         assertEquals("about: pages are the app's", "about:blank",
                 SlothShell.addressFor("about:blank", "about:blank"));
+        assertEquals("a whole address in the app's field is newer than the engine's last start",
+                "https://example.org/page", SlothShell.addressFor("https://example.org/page",
+                        "https://example.org/"));
     }
 
     /** The app's field holds the host; a tap shows the whole URL the engine reported. */

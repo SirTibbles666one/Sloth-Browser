@@ -2284,7 +2284,8 @@ public final class SlothShell {
     static String addressFor(String shown, String engine) {
         String app = shown == null ? "" : shown.trim();
         String whole = engine == null ? "" : engine.trim();
-        if (app.isEmpty() || whole.isEmpty()) {
+        if (app.isEmpty() || whole.isEmpty() || app.contains("://")) {
+            // the app's field already names a whole address: it is the newer of the two
             return app;
         }
         String lower = whole.toLowerCase(java.util.Locale.UK);
