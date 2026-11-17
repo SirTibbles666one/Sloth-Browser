@@ -222,7 +222,7 @@ lost about 730 lines of the old builders.
 
 The README listed "no loading progress or real Stop: no progress API is reachable from the shell".
 GeckoView's public `GeckoSession.setProgressDelegate` is reachable the same way Find reaches the
-session, so `SlothProgress` puts a proxy delegate on the current session: it tells the bar, then
+session, so `SlothLoad` puts a proxy delegate on the current session: it tells the bar, then
 forwards every call to whatever delegate the app had set, unchanged. The tick re-checks the
 session, so a tab change or an app that sets its own delegate later is wrapped again - never a
 wrapper inside a wrapper - and a background tab's calls do not move the bar. Stop calls

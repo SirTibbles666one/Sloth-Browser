@@ -519,7 +519,7 @@ public final class SlothShell {
         animating = false;
         lastProbe = 0;
         SlothCover.forget();
-        SlothProgress.forget();
+        SlothLoad.forget();
         owner = null;
     }
 
@@ -2203,10 +2203,7 @@ public final class SlothShell {
 
     private static boolean stop(Activity activity) {
         // the engine's own stop first; the app's routine is the fallback for a build without one
-        if (SlothProgress.stop(activity)) {
-            if (topBar != null) {
-                topBar.setLoading(false);
-            }
+        if (SlothLoad.stop(activity)) {
             return true;
         }
         try {
@@ -2230,25 +2227,13 @@ public final class SlothShell {
      * worse than one that does nothing.</p>
      */
     /** The engine's progress, drawn on the bar. Reads topBar at call time: a rebuild replaces it. */
-    private static final SlothProgress.Listener PROGRESS = new SlothProgress.Listener() {
+    private static final SlothLoad.Listener PROGRESS = new SlothLoad.Listener() {
         @Override
-        public void started() {
+        public void changed(Object session) {
             if (topBar != null) {
-                topBar.setLoading(true);
-            }
-        }
-
-        @Override
-        public void progress(int percent) {
-            if (topBar != null) {
-                topBar.setProgress(percent);
-            }
-        }
-
-        @Override
-        public void stopped() {
-            if (topBar != null) {
-                topBar.setLoading(false);
+                // drawn from the session's own state, so a tab switch shows that tab's load
+                SlothLoad.State load = SlothLoad.state(session);
+                topBar.showLoad(load.loading, load.progress);
             }
         }
     };
@@ -3261,7 +3246,7 @@ public final class SlothShell {
             checkEdgeWindow(activity);
             syncHistory(activity);
             // the session changes with the tab, and the app may set its own delegate later
-            SlothProgress.watch(activity, PROGRESS);
+            SlothLoad.watch(activity, PROGRESS);
             if (board != null && topBar != null) {
                 // the drawer's address line is the same fact as the bar's, so it is kept
                 // the same way: on the timer, not only when the drawer is rebuilt
