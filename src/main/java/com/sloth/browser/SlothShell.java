@@ -113,11 +113,9 @@ public final class SlothShell {
     /* ------------------------------------------------------------------ state */
     private static View overlay;
     private static View drawer;
-    private static EditText address;
     private static int peekPx;
     /** The seat the drawer last rested on, so haptics fire on a change and not a repeat. */
     private static int lastSeat = -1;
-    private static boolean peekFromContent;
     /** True while the app's own settings screen owns the panel. */
     private static boolean settingsOpen;
     private static View libraryPage;
@@ -468,7 +466,6 @@ public final class SlothShell {
         chromeViews.clear();
         overlay = null;
         drawer = null;
-        address = null;
         dock = null;
         main = null;
         sheetView = null;
@@ -486,7 +483,6 @@ public final class SlothShell {
         dockH = -1;
         mainH = 0;
         peekPx = 0;
-        peekFromContent = false;
         openIntent = false;
         settingsOpen = false;
         libraryPage = null;
@@ -650,7 +646,6 @@ public final class SlothShell {
             topBar = new SlothTopBar(activity, barHost(activity));
             View bar = topBar.view();
             barView = bar;
-            address = topBar.field();
             chromeViews.clear();
             java.util.Collections.addAll(chromeViews, topBar.controls());
 
@@ -1943,11 +1938,6 @@ public final class SlothShell {
         return appRootPadBottom;
     }
 
-    /** The peek seat as measured, for the harness. */
-    static int peekForTest(Activity activity) {
-        return peekPx;
-    }
-
     /** The status bar's height as the shell measured it, for the harness. */
     static int statusForTest() {
         return statusInset;
@@ -2619,21 +2609,6 @@ public final class SlothShell {
     }
 
 
-    /** The panel's own outline: a pill closed, a single rounded slab open. */
-    private static void panelShape(Activity activity, boolean open) {
-        if (surfaceView == null) {
-            return;
-        }
-        int r = dp(activity, 28);
-        int bottom = dp(activity, SlothTheme.radius());
-        GradientDrawable shape = new GradientDrawable();
-        shape.setColor(SlothTheme.surface());
-        shape.setCornerRadii(open
-                ? new float[]{r, r, r, r, bottom, bottom, bottom, bottom}
-                : new float[]{r, r, r, r, r, r, r, r});
-        surfaceView.setBackground(shape);
-    }
-
     private static void setDrawerHeight(Activity activity, int h) {
         int was = drawer == null || drawer.getLayoutParams() == null
                 ? 0 : drawer.getLayoutParams().height;
@@ -3259,14 +3234,6 @@ public final class SlothShell {
         paintStatusBar(activity);
     }
 
-    private static FrameLayout.LayoutParams fadeLp(Activity activity) {
-        FrameLayout.LayoutParams lp = new FrameLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, dp(activity, 26));
-        lp.gravity = Gravity.BOTTOM;
-        lp.bottomMargin = navInset(activity);
-        return lp;
-    }
-
     private static int screenWidth(Activity activity) {
         try {
             return activity.getResources().getDisplayMetrics().widthPixels;
@@ -3406,10 +3373,10 @@ public final class SlothShell {
             syncHistory(activity);
             // the session changes with the tab, and the app may set its own delegate later
             SlothProgress.watch(activity, PROGRESS);
-            if (board != null && address != null) {
+            if (board != null && topBar != null) {
                 // the drawer's address line is the same fact as the bar's, so it is kept
                 // the same way: on the timer, not only when the drawer is rebuilt
-                board.onSite(topBar == null ? String.valueOf(address.getText()) : topBar.pageAddress());
+                board.onSite(topBar.pageAddress());
             }
             int count = tabCount(activity);
             if (topBar != null) {
