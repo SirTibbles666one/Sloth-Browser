@@ -90,9 +90,9 @@ final class SlothTopBar {
         row.setBackground(null);
         row.setLayoutParams(new FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, dp(56), Gravity.TOP));
-        row.addView(buildField(), new LinearLayout.LayoutParams(0, dp(44), 1f));
+        row.addView(buildField(), new LinearLayout.LayoutParams(0, dp(48), 1f));
         countButton = buildCount();
-        LinearLayout.LayoutParams countLp = new LinearLayout.LayoutParams(dp(44), dp(44));
+        LinearLayout.LayoutParams countLp = new LinearLayout.LayoutParams(dp(48), dp(48));
         countLp.leftMargin = dp(4);
         row.addView(countButton, countLp);
         menu = iconButton(SlothIcons.Kind.MENU, "Menu", 22);
@@ -103,7 +103,7 @@ final class SlothTopBar {
                 host.showMenu();
             }
         });
-        row.addView(menu, new LinearLayout.LayoutParams(dp(44), dp(44)));
+        row.addView(menu, new LinearLayout.LayoutParams(dp(48), dp(48)));
     }
 
     View view() {
@@ -302,12 +302,16 @@ final class SlothTopBar {
                 host.siteInfo();
             }
         });
-        pill.addView(siteIcon, new LinearLayout.LayoutParams(dp(36), dp(40)));
+        // a 48 dp box for the finger, the mark drawn at the 36 dp it always was
+        siteIcon.setPadding(dp(6), dp(6), dp(6), dp(6));
+        pill.addView(siteIcon, new LinearLayout.LayoutParams(dp(48), dp(48)));
 
         field = new EditText(activity);
         field.setTag("address");
         field.setSingleLine(true);
-        field.setTextSize(TypedValue.COMPLEX_UNIT_SP, 15f);
+        // the bar is a fixed height: its text follows the phone's text size up to 1.3x, and
+        // stops there so the address is not cut to a few letters
+        field.setTextSize(TypedValue.COMPLEX_UNIT_DIP, cappedSp(15f));
         field.setTextColor(SlothTheme.ink());
         field.setHintTextColor(SlothTheme.dim());
         field.setHint("Search or open");
@@ -330,7 +334,7 @@ final class SlothTopBar {
                 field.requestFocus();
             }
         });
-        pill.addView(clear, new LinearLayout.LayoutParams(dp(40), dp(40)));
+        pill.addView(clear, new LinearLayout.LayoutParams(dp(48), dp(48)));
 
         reload = iconButton(SlothIcons.Kind.RELOAD, "Reload", 18);
         reload.setTag("bar-reload");
@@ -354,7 +358,7 @@ final class SlothTopBar {
                 return host.stop();
             }
         });
-        pill.addView(reload, new LinearLayout.LayoutParams(dp(40), dp(40)));
+        pill.addView(reload, new LinearLayout.LayoutParams(dp(48), dp(48)));
 
         field.setOnEditorActionListener(new TextView.OnEditorActionListener() {
             @Override
@@ -540,7 +544,8 @@ final class SlothTopBar {
         frame.setStroke(dp(2), SlothTheme.ink());
         box.setBackground(frame);
         countFace = new TextView(activity);
-        countFace.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f);
+        // the number sits in a drawn square of fixed size; the count is spoken in full anyway
+        countFace.setTextSize(TypedValue.COMPLEX_UNIT_DIP, cappedSp(12f));
         countFace.setTextColor(SlothTheme.ink());
         countFace.setTypeface(countFace.getTypeface(), android.graphics.Typeface.BOLD);
         countFace.setIncludeFontPadding(false);
@@ -596,6 +601,12 @@ final class SlothTopBar {
         states.addState(new int[]{android.R.attr.state_pressed}, pressed);
         states.addState(new int[]{}, idle);
         return states;
+    }
+
+    /** A size in sp, scaled with the phone's text size but no further than 1.3x, in dp. */
+    private float cappedSp(float sp) {
+        float scale = activity.getResources().getConfiguration().fontScale;
+        return sp * Math.min(1.3f, Math.max(0.85f, scale));
     }
 
     private int dp(int value) {

@@ -90,7 +90,8 @@ final class SlothLibrary {
                 onClose.run();
             }
         });
-        LinearLayout.LayoutParams backLp = new LinearLayout.LayoutParams(dip(activity, 40), dip(activity, 40));
+        back.setPadding(dip(activity, 4), dip(activity, 4), dip(activity, 4), dip(activity, 4));
+        LinearLayout.LayoutParams backLp = new LinearLayout.LayoutParams(dip(activity, 48), dip(activity, 48));
         head.addView(back, backLp);
 
         final TextView save = label(activity, "Save page", 12f, SlothTheme.accent(), true);

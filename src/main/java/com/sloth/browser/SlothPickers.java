@@ -85,6 +85,9 @@ final class SlothPickers {
             // a tick, not just a tinted outline: the selected row has to be obvious
             SlothIcons tick = SlothIcons.of(activity, SlothIcons.Kind.CHECK, 18, SlothTheme.accent());
             tick.setContentDescription("Current palette");
+            // a mark, not a control: the row is what a finger and a screen reader land on
+            tick.setClickable(false);
+            tick.setFocusable(false);
             // the icon's own fixed size: a wrap would let a drawn mark take the whole row
             LinearLayout.LayoutParams tickLp = (LinearLayout.LayoutParams) tick.getLayoutParams();
             tickLp.rightMargin = dp(activity, 8);
@@ -152,8 +155,9 @@ final class SlothPickers {
                 cover.setVisibility(View.GONE);
             }
         });
+        close.setMinWidth(dp(activity, 48));
         head.addView(close, new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.WRAP_CONTENT, dp(activity, 36)));
+                ViewGroup.LayoutParams.WRAP_CONTENT, dp(activity, 48)));
         return head;
     }
 

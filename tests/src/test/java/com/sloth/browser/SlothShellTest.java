@@ -3433,7 +3433,8 @@ public class SlothShellTest {
                 card.getMinimumHeight() >= px(64));
         ViewGroup grid = (ViewGroup) findByViewTag(drawer, "tab-row");
         assertTrue("two cards across, so a title has room", grid instanceof SlothGrid);
-        assertEquals(2, ((SlothGrid) grid).columns());
+        assertEquals("two columns where there is room, one on a narrow phone",
+                SlothBoard.roomyTabs(activity) ? 2 : 1, ((SlothGrid) grid).columns());
     }
 
     private String firstInitial(View card) {
@@ -3558,6 +3559,74 @@ public class SlothShellTest {
      * rather than argued about. A three-button navigation bar is drawn over the
      * bottom of each shot, because that is what sits there on the phone.
      * ------------------------------------------------------------------- */
+
+    /** Large text and a small phone: the two places a layout runs out of room first. */
+    @Test
+    @org.robolectric.annotation.GraphicsMode(org.robolectric.annotation.GraphicsMode.Mode.NATIVE)
+    @org.robolectric.annotation.Config(qualifiers = "w360dp-h740dp-xhdpi")
+    public void renderSmallPhoneWithLargeTextForReview() throws Exception {
+        org.junit.Assume.assumeTrue("set SLOTH_RENDER=1 to run the render pass",
+                "1".equals(System.getenv("SLOTH_RENDER")));
+        java.io.File dir = new java.io.File("/opt/data/cache/scratch/shots");
+        dir.mkdirs();
+        SlothShell.testNavInset = 144; // a three-button navigation bar, as the main pass uses
+        float density = org.robolectric.RuntimeEnvironment.getApplication().getResources()
+                .getDisplayMetrics().density;
+        // a 360 x 740 dp phone at the harness's own density
+        int w = Math.round(360 * density);
+        int h = Math.round(740 * density);
+        for (float scale : new float[]{1f, 2f}) {
+            TestActivity activity = build();
+            // the text size a person chose in the phone's settings, set on this window only:
+            // the harness's own font-scale switch resets the screen density with it
+            android.content.res.Resources res = activity.getResources();
+            android.content.res.Configuration config = new android.content.res.Configuration(
+                    res.getConfiguration());
+            config.fontScale = scale;
+            res.updateConfiguration(config, res.getDisplayMetrics());
+            res.getDisplayMetrics().scaledDensity = res.getDisplayMetrics().density * scale;
+            addTabs(activity, "Documents and spreadsheets", "Mail", "News of the day");
+            pageWithSession(activity);
+            SlothTheme.select(activity, 0);
+            activity.binding.urlBar.setText("https://www.example.org/articles/sloths?ref=home");
+            SlothShell.own(activity);
+            settle();
+            String tag = scale == 1f ? "s" : "s-text2x";
+            shootAt(activity, new java.io.File(dir, "40-" + tag + "-bar.png"), w, h);
+            driveHeight(activity, peekHeight(activity));
+            settle();
+            shootAt(activity, new java.io.File(dir, "41-" + tag + "-strip.png"), w, h);
+            driveHeight(activity, fullSeat(activity));
+            settle();
+            SlothShell.boardForTest().setWidgetsOpen(true);
+            settle();
+            shootAt(activity, new java.io.File(dir, "42-" + tag + "-full.png"), w, h);
+            SlothShell.openSettingsPage(activity);
+            settle();
+            shootAt(activity, new java.io.File(dir, "43-" + tag + "-settings.png"), w, h);
+            SlothShell.backOneLayer(activity);
+            SlothShell.openFind(activity);
+            settle();
+            shootAt(activity, new java.io.File(dir, "44-" + tag + "-find.png"), w, h);
+            SlothShell.releaseShellForTest();
+        }
+        SlothShell.testNavInset = -1;
+    }
+
+    private void shootAt(Activity activity, java.io.File out, int w, int h) throws Exception {
+        View root = activity.findViewById(android.R.id.content);
+        root.measure(View.MeasureSpec.makeMeasureSpec(w, View.MeasureSpec.EXACTLY),
+                View.MeasureSpec.makeMeasureSpec(h, View.MeasureSpec.EXACTLY));
+        root.layout(0, 0, w, h);
+        android.graphics.Bitmap bitmap = android.graphics.Bitmap.createBitmap(w, h,
+                android.graphics.Bitmap.Config.ARGB_8888);
+        android.graphics.Canvas canvas = new android.graphics.Canvas(bitmap);
+        canvas.drawColor(0xFF101010);
+        root.draw(canvas);
+        try (java.io.FileOutputStream file = new java.io.FileOutputStream(out)) {
+            bitmap.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, file);
+        }
+    }
 
     @Test
     @org.robolectric.annotation.GraphicsMode(org.robolectric.annotation.GraphicsMode.Mode.NATIVE)
@@ -7380,6 +7449,147 @@ public class SlothShellTest {
             }
         }
         return "no path from the shell's statics or the main looper (searched " + visited + " objects)";
+    }
+
+
+    /* ------------------------------------------------------------------ accessibility */
+
+    /** Every control on screen in this state that has no spoken label or is too small to hit. */
+    private java.util.List<String> a11yProblems(Activity activity, String state) {
+        View root = overlayOf(activity);
+        root.measure(View.MeasureSpec.makeMeasureSpec(1080, View.MeasureSpec.EXACTLY),
+                View.MeasureSpec.makeMeasureSpec(2340, View.MeasureSpec.EXACTLY));
+        root.layout(0, 0, 1080, 2340);
+        java.util.List<String> out = new java.util.ArrayList<>();
+        collectA11y(root, state, out, px(48));
+        return out;
+    }
+
+    private void collectA11y(View v, String state, java.util.List<String> out, int minimum) {
+        if (v.getVisibility() != View.VISIBLE || v.getWidth() == 0 || v.getHeight() == 0
+                || v.getImportantForAccessibility() == View.IMPORTANT_FOR_ACCESSIBILITY_NO_HIDE_DESCENDANTS) {
+            return;
+        }
+        if (v.isClickable() && v.getImportantForAccessibility()
+                != View.IMPORTANT_FOR_ACCESSIBILITY_NO_HIDE_DESCENDANTS
+                && v.getImportantForAccessibility() != View.IMPORTANT_FOR_ACCESSIBILITY_NO) {
+            CharSequence said = v.getContentDescription();
+            if ((said == null || said.length() == 0) && v instanceof TextView) {
+                said = ((TextView) v).getText();
+            }
+            if ((said == null || said.length() == 0) && v instanceof ViewGroup) {
+                said = firstText((ViewGroup) v);
+            }
+            String name = v.getClass().getSimpleName() + (v.getTag() == null ? "" : "[" + v.getTag() + "]");
+            if (said == null || said.length() == 0) {
+                out.add(state + ": " + name + " has no spoken label");
+            }
+            boolean field = v instanceof EditText;
+            // the band at the drawer's foot is a place to drag, not a button: the drawer has a
+            // Close control and Back for the same thing, so its height is judged as a band
+            boolean band = "close-grip".equals(v.getTag());
+            if (!field && !band && (v.getWidth() < minimum || v.getHeight() < minimum)) {
+                out.add(state + ": " + name + " '" + said + "' is " + v.getWidth() + "x" + v.getHeight()
+                        + ", under " + minimum + "x" + minimum);
+            }
+        }
+        if (v instanceof ViewGroup) {
+            for (int i = 0; i < ((ViewGroup) v).getChildCount(); i++) {
+                collectA11y(((ViewGroup) v).getChildAt(i), state, out, minimum);
+            }
+        }
+    }
+
+    private static CharSequence firstText(ViewGroup group) {
+        for (int i = 0; i < group.getChildCount(); i++) {
+            View child = group.getChildAt(i);
+            if (child instanceof TextView && ((TextView) child).getText().length() > 0) {
+                return ((TextView) child).getText();
+            }
+            if (child instanceof ViewGroup) {
+                CharSequence inner = firstText((ViewGroup) child);
+                if (inner != null) {
+                    return inner;
+                }
+            }
+        }
+        return null;
+    }
+
+    /** A list over the drawer hides the drawer from a screen reader, and gives it back after. */
+    @Test
+    public void aScreenReaderCannotWalkUnderAListOverTheDrawer() {
+        TestActivity activity = build();
+        SlothShell.own(activity);
+        settle();
+        SlothShell.openWidgetChooser(activity);
+        settle();
+        View holder = findByViewTag(drawerOf(activity), "drawer-holder");
+        holder.getViewTreeObserver().dispatchOnGlobalLayout();
+        assertEquals("the drawer's own controls are under the list",
+                View.IMPORTANT_FOR_ACCESSIBILITY_NO_HIDE_DESCENDANTS, holder.getImportantForAccessibility());
+        SlothShell.backOneLayer(activity);
+        settle();
+        holder.getViewTreeObserver().dispatchOnGlobalLayout();
+        assertEquals("list gone, the drawer is spoken again", View.IMPORTANT_FOR_ACCESSIBILITY_AUTO,
+                holder.getImportantForAccessibility());
+    }
+
+    /** A normal phone gets two columns of tab cards; a narrow one or large text gets one. */
+    @Test
+    @org.robolectric.annotation.Config(qualifiers = "w411dp-h891dp")
+    public void tabCardsUseTwoColumnsWhereTheresRoom() {
+        TestActivity activity = build();
+        assertTrue("411 dp, normal text", SlothBoard.roomyTabs(activity));
+        android.content.res.Configuration big = new android.content.res.Configuration(
+                activity.getResources().getConfiguration());
+        big.fontScale = 2f;
+        activity.getResources().updateConfiguration(big, activity.getResources().getDisplayMetrics());
+        assertFalse("the same phone at 200% text", SlothBoard.roomyTabs(activity));
+    }
+
+    @Test
+    @org.robolectric.annotation.Config(qualifiers = "w360dp-h740dp")
+    public void aNarrowPhoneGetsOneColumnOfTabCards() {
+        assertFalse(SlothBoard.roomyTabs(build()));
+    }
+
+    /** Every screen of the shell: each control is spoken and big enough for a thumb. */
+    @Test
+    public void everyScreenIsSpokenAndBigEnoughToTap() throws Exception {
+        java.util.List<String> problems = new java.util.ArrayList<>();
+        TestActivity activity = build();
+        addTabs(activity, "Docs", "Mail", "News");
+        activity.binding.urlBar.setText("https://example.org/page");
+        SlothShell.own(activity);
+        settle();
+        problems.addAll(a11yProblems(activity, "bar"));
+        driveHeight(activity, peekHeight(activity));
+        settle();
+        problems.addAll(a11yProblems(activity, "strip"));
+        driveHeight(activity, fullSeat(activity));
+        settle();
+        problems.addAll(a11yProblems(activity, "full drawer"));
+        SlothShell.boardForTest().setWidgetsOpen(true);
+        settle();
+        problems.addAll(a11yProblems(activity, "drawer with widgets"));
+        SlothShell.openWidgetChooser(activity);
+        settle();
+        problems.addAll(a11yProblems(activity, "widget list"));
+        SlothShell.backOneLayer(activity);
+        SlothShell.openPalettePicker(activity);
+        settle();
+        problems.addAll(a11yProblems(activity, "palette list"));
+        SlothShell.backOneLayer(activity);
+        for (String page : PAGES) {
+            openPage(activity, page);
+            settle();
+            problems.addAll(a11yProblems(activity, page));
+            SlothShell.backOneLayer(activity);
+            settle();
+        }
+        java.util.LinkedHashSet<String> unique = new java.util.LinkedHashSet<>(problems);
+        assertTrue(unique.size() + " problems:\n" + String.join("\n", unique), unique.isEmpty());
     }
 
     /** The shell's own gesture, the one every surface reports into. */

@@ -117,7 +117,9 @@ final class SlothBoard {
         root.addView(head());
         root.addView(sectionHeader("Tabs", true));
         root.addView(tabFilter());
-        tabGrid = new SlothGrid(activity, 2, dp(10));
+        // two columns leave a title a few letters on a small phone or at large text, and a
+        // word broken across lines in the middle; one column gives it the drawer's width
+        tabGrid = new SlothGrid(activity, roomyTabs(activity) ? 2 : 1, dp(10));
         tabGrid.setTag("tab-row");
         tabGrid.setPadding(0, dp(2), 0, dp(4));
         root.addView(tabGrid, full());
@@ -151,7 +153,7 @@ final class SlothBoard {
         siteRow.setTag("site-row");
         siteRow.setClickable(true);
         siteRow.setFocusable(true);
-        siteRow.setMinimumHeight(dp(44));
+        siteRow.setMinimumHeight(dp(48));
         siteDot = new View(activity);
         LinearLayout.LayoutParams dotLp = new LinearLayout.LayoutParams(dp(8), dp(8));
         dotLp.rightMargin = dp(10);
@@ -179,7 +181,7 @@ final class SlothBoard {
                 closeDrawer();
             }
         });
-        LinearLayout.LayoutParams closeLp = new LinearLayout.LayoutParams(dp(44), dp(44));
+        LinearLayout.LayoutParams closeLp = new LinearLayout.LayoutParams(dp(48), dp(48));
         closeLp.leftMargin = dp(8);
         head.addView(close, closeLp);
         onSite(null);
@@ -266,7 +268,7 @@ final class SlothBoard {
         newTab.setOrientation(LinearLayout.HORIZONTAL);
         newTab.setGravity(Gravity.CENTER);
         newTab.setPadding(dp(12), 0, dp(14), 0);
-        newTab.setMinimumHeight(dp(40));
+        newTab.setMinimumHeight(dp(48));
         newTab.setBackground(fill(999, SlothTheme.accent(), 0));
         newTab.setContentDescription("New tab");
         newTab.setClickable(true);
@@ -287,7 +289,7 @@ final class SlothBoard {
             }
         });
         header.addView(newTab, new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.WRAP_CONTENT, dp(40)));
+                ViewGroup.LayoutParams.WRAP_CONTENT, dp(48)));
         return header;
     }
 
@@ -421,7 +423,7 @@ final class SlothBoard {
         toggle.setTag("widgets-toggle");
         toggle.setOrientation(LinearLayout.HORIZONTAL);
         toggle.setGravity(Gravity.CENTER_VERTICAL);
-        toggle.setMinimumHeight(dp(44));
+        toggle.setMinimumHeight(dp(48));
         toggle.setClickable(true);
         toggle.setFocusable(true);
         toggle.addView(text("Widgets", 15f, SlothTheme.ink(), true));
@@ -443,7 +445,8 @@ final class SlothBoard {
         editButton.setTag("edit-widgets");
         editButton.setGravity(Gravity.CENTER);
         editButton.setPadding(dp(16), 0, dp(16), 0);
-        editButton.setMinHeight(dp(40));
+        editButton.setMinHeight(dp(48));
+        editButton.setMinWidth(dp(48));
         editButton.setBackground(press(999));
         editButton.setContentDescription("Edit widgets");
         editButton.setOnClickListener(new View.OnClickListener() {
@@ -455,7 +458,7 @@ final class SlothBoard {
             }
         });
         header.addView(editButton, new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.WRAP_CONTENT, dp(40)));
+                ViewGroup.LayoutParams.WRAP_CONTENT, dp(48)));
         widgetHeader = toggle;
         return header;
     }
@@ -711,7 +714,8 @@ final class SlothBoard {
         clear.setContentDescription("Clear the note");
         clear.setGravity(Gravity.CENTER);
         clear.setPadding(dp(14), 0, dp(14), 0);
-        clear.setMinHeight(dp(40));
+        clear.setMinHeight(dp(48));
+        clear.setMinWidth(dp(48));
         clear.setBackground(press(999));
         clear.setOnClickListener(new View.OnClickListener() {
             @Override
@@ -884,6 +888,14 @@ final class SlothBoard {
     /** The tag a card's readable title is kept under, for the filter and the staleness check. */
     static final int R_TITLE = 0x7F5100A1;
 
+    /** Two columns of tab cards only where a title still gets room: wide enough, normal text. */
+    static boolean roomyTabs(android.content.Context context) {
+        android.util.DisplayMetrics m = context.getResources().getDisplayMetrics();
+        float widthDp = m.widthPixels / Math.max(0.1f, m.density);
+        float textScale = context.getResources().getConfiguration().fontScale;
+        return widthDp >= 400 && textScale <= 1.3f;
+    }
+
     /**
      * Bring the cards in line with the browser's own tab strip. An unchanged strip keeps
      * its cards, so the 800 ms tick does not rebuild listeners and drawables for nothing.
@@ -964,12 +976,15 @@ final class SlothBoard {
         words.setOrientation(LinearLayout.VERTICAL);
         words.setPadding(dp(10), 0, dp(2), 0);
         TextView name = text(trimmed, 13f, SlothTheme.ink(), true);
-        name.setMaxLines(2);
+        // one line, cut with an ellipsis: two lines split a long word in the middle
+        name.setMaxLines(1);
         name.setEllipsize(TextUtils.TruncateAt.END);
         name.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);
         words.addView(name);
         if (current) {
             TextView here = text("Current tab", 11f, SlothTheme.accent(), true);
+            here.setMaxLines(1);
+            here.setEllipsize(TextUtils.TruncateAt.END);
             here.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);
             words.addView(here);
         }
@@ -990,7 +1005,7 @@ final class SlothBoard {
                 mirrorNow();
             }
         });
-        card.addView(close, new LinearLayout.LayoutParams(dp(40), dp(40)));
+        card.addView(close, new LinearLayout.LayoutParams(dp(48), dp(48)));
         return card;
     }
 
