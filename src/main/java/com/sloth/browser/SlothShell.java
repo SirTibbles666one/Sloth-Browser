@@ -734,13 +734,13 @@ public final class SlothShell {
         // stacking order matters: the widget chooser under the content until it is brought
         // forward, the band AFTER the holder (a handle drawn under the content cannot be
         // touched at all), and the palette last so it covers both
-        widgetSheet = widgetChooser(activity);
+        widgetSheet = SlothPickers.widgets(activity, pickerHost(activity));
         sheet.addView(widgetSheet);
         sheet.addView(holder, new FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
         gripBar = buildGrip(activity, shellDrag);
         sheet.addView(gripBar);
-        paletteSheet = palettePicker(activity);
+        paletteSheet = SlothPickers.palette(activity, pickerHost(activity));
         if (paletteSheet != null) {
             sheet.addView(paletteSheet);
         }
@@ -1161,22 +1161,6 @@ public final class SlothShell {
         }
     }
 
-    /**
-     * The app's settings screen is built into panelBody, so the shell has to stop
-     * hiding that panel while it is open - otherwise the screen is drawn into a
-     * view with no size and nothing appears.
-     */
-    private static TextView text(Activity activity, String value, float size, int colour, boolean bold) {
-        TextView view = new TextView(activity);
-        view.setText(value);
-        view.setTextSize(TypedValue.COMPLEX_UNIT_SP, size);
-        view.setTextColor(colour);
-        if (bold) {
-            view.setTypeface(view.getTypeface(), android.graphics.Typeface.BOLD);
-        }
-        return view;
-    }
-
     /** A rounded box with an optional hairline, in the active palette. */
     static GradientDrawable box(Activity activity, float radius, int fill, int stroke) {
         GradientDrawable shape = new GradientDrawable();
@@ -1188,204 +1172,41 @@ public final class SlothShell {
         return shape;
     }
 
-    /** Add widget: the five things the drawer can hold, with the ones on it ticked. */
-    private static View widgetChooser(final Activity activity) {
-        FrameLayout cover = new FrameLayout(activity);
-        cover.setTag("widgets");
-        cover.setBackgroundColor(SlothTheme.surface());
-        cover.setVisibility(View.GONE);
-        cover.setLayoutParams(new FrameLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
-
-        LinearLayout column = new LinearLayout(activity);
-        column.setOrientation(LinearLayout.VERTICAL);
-        column.setPadding(dp(activity, 16), dp(activity, 10), dp(activity, 16), dp(activity, 10));
-
-        LinearLayout head = new LinearLayout(activity);
-        head.setGravity(Gravity.CENTER_VERTICAL);
-        TextView title = text(activity, "Widgets", 13f, SlothTheme.muted(), true);
-        head.addView(title, new LinearLayout.LayoutParams(0,
-                ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
-        TextView close = text(activity, "Close", 13f, SlothTheme.ink(), false);
-        close.setGravity(Gravity.CENTER);
-        close.setContentDescription("Close the widget list");
-        close.setBackground(box(activity, 999, 0, SlothTheme.lineAt(0x33)));
-        close.setPadding(dp(activity, 16), 0, dp(activity, 16), 0);
-        close.setOnClickListener(new View.OnClickListener() {
+    /** What a pick in the widget or palette list does to the shell. */
+    private static SlothPickers.Host pickerHost(final Activity activity) {
+        return new SlothPickers.Host() {
             @Override
-            public void onClick(View v) {
-                if (widgetSheet != null) {
-                    widgetSheet.setVisibility(View.GONE);
-                }
+            public boolean widgetShown(String kind) {
+                return board != null && !board.isHidden(kind);
             }
-        });
-        head.addView(close, new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.WRAP_CONTENT, dp(activity, 36)));
-        column.addView(head);
 
-        for (final String kind : SlothBoard.KINDS) {
-            final boolean shown = board != null && !board.isHidden(kind);
-            LinearLayout row = new LinearLayout(activity);
-            row.setGravity(Gravity.CENTER_VERTICAL);
-            row.setPadding(dp(activity, 12), 0, dp(activity, 12), 0);
-            row.setClickable(true);
-            row.setFocusable(true);
-            row.setTag("widget-row");
-            row.setContentDescription(SlothBoard.kindLabel(kind));
-            row.setBackground(box(activity, 14, SlothTheme.card(),
-                    shown ? SlothTheme.lineAt(0x8C) : SlothTheme.lineAt(0x1A)));
-            LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(
-                    ViewGroup.LayoutParams.MATCH_PARENT, dp(activity, 48));
-            lp.bottomMargin = dp(activity, 8);
-            row.setLayoutParams(lp);
-
-            row.addView(text(activity, SlothBoard.kindLabel(kind), 14f, SlothTheme.ink(), false),
-                    new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
-            row.addView(text(activity, shown ? "\u2713" : "+", 15f, SlothTheme.accent(), true));
-            row.setOnClickListener(new View.OnClickListener() {
-                @Override
-                public void onClick(View v) {
-                    if (board != null) {
-                        board.toggleWidget(kind);
-                    }
-                    // the drawer's own content changes, so the surface is rebuilt - but the
-                    // drawer was open when this was tapped, so it comes back at the same
-                    // height with the list still on show rather than shutting in the face
-                    // of the person using it
-                    final int wasOpen = drawer == null ? 0 : drawer.getLayoutParams().height;
-                    MAIN.post(new Runnable() {
-                        @Override
-                        public void run() {
-                            if (owner != activity) {
-                                return; // the window that asked for this is gone
-                            }
-                            rebuild(activity);
-                            if (wasOpen > 0) {
-                                setDrawerHeight(activity, wasOpen);
-                                openWidgetChooser(activity);
-                            }
+            @Override
+            public void toggleWidget(String kind) {
+                if (board != null) {
+                    board.toggleWidget(kind);
+                }
+                // the drawer's own content changes, so the surface is rebuilt - but the
+                // drawer was open when this was tapped, so it comes back at the same
+                // height with the list still on show rather than shutting in the face
+                // of the person using it
+                final int wasOpen = drawer == null ? 0 : drawer.getLayoutParams().height;
+                MAIN.post(new Runnable() {
+                    @Override
+                    public void run() {
+                        if (owner != activity) {
+                            return; // the window that asked for this is gone
                         }
-                    });
-                }
-            });
-            column.addView(row);
-        }
-        cover.addView(column);
-        return cover;
-    }
-
-    /** Every palette, with its own colours on show, so the choice is not a word. */
-    private static View palettePicker(final Activity activity) {
-        FrameLayout cover = new FrameLayout(activity);
-        cover.setTag("palette");
-        cover.setBackgroundColor(SlothTheme.surface());
-        cover.setVisibility(View.GONE);
-        cover.setLayoutParams(new FrameLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
-
-        LinearLayout column = new LinearLayout(activity);
-        column.setOrientation(LinearLayout.VERTICAL);
-        column.setPadding(dp(activity, 16), dp(activity, 10), dp(activity, 16), dp(activity, 10));
-
-        LinearLayout head = new LinearLayout(activity);
-        head.setOrientation(LinearLayout.HORIZONTAL);
-        head.setGravity(Gravity.CENTER_VERTICAL);
-        TextView title = new TextView(activity);
-        title.setText("Palette");
-        title.setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f);
-        title.setTextColor(SlothTheme.dim());
-        title.setLetterSpacing(0.14f);
-        head.addView(title, new LinearLayout.LayoutParams(0,
-                ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
-
-        TextView close = new TextView(activity);
-        close.setText("Close");
-        close.setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f);
-        close.setTextColor(SlothTheme.ink());
-        close.setGravity(Gravity.CENTER);
-        close.setContentDescription("Close the palette list");
-        close.setBackground(box(activity, 999, 0, SlothTheme.lineAt(0x33)));
-        close.setPadding(dp(activity, 16), 0, dp(activity, 16), 0);
-        close.setOnClickListener(new View.OnClickListener() {
-            @Override
-            public void onClick(View v) {
-                if (paletteSheet != null) {
-                    paletteSheet.setVisibility(View.GONE);
-                }
+                        rebuild(activity);
+                        if (wasOpen > 0) {
+                            setDrawerHeight(activity, wasOpen);
+                            openWidgetChooser(activity);
+                        }
+                    }
+                });
             }
-        });
-        head.addView(close, new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.WRAP_CONTENT, dp(activity, 36)));
-        column.addView(head);
 
-        final ScrollView scroller = new ScrollView(activity);
-        LinearLayout rows = new LinearLayout(activity);
-        rows.setOrientation(LinearLayout.VERTICAL);
-        rows.setPadding(0, dp(activity, 6), 0, 0);
-
-        for (int i = 0; i < SlothTheme.NAMES.length; i++) {
-            rows.addView(paletteRow(activity, i));
-        }
-        scroller.addView(rows);
-        column.addView(scroller, new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f));
-
-        cover.addView(column);
-        return cover;
-    }
-
-    private static View paletteRow(final Activity activity, final int which) {
-        final LinearLayout row = new LinearLayout(activity);
-        row.setOrientation(LinearLayout.HORIZONTAL);
-        row.setGravity(Gravity.CENTER_VERTICAL);
-        row.setPadding(dp(activity, 12), 0, dp(activity, 12), 0);
-        String full = SlothTheme.FULL[which];
-        row.setContentDescription(full);
-        row.setTag("palette-row");
-        row.setClickable(true);
-        row.setFocusable(true);
-        boolean current = which == SlothTheme.index();
-        row.setBackground(box(activity, 14, SlothTheme.card(),
-                current ? SlothTheme.lineAt(0x8C) : SlothTheme.lineAt(0x1A)));
-        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, dp(activity, 52));
-        lp.bottomMargin = dp(activity, 8);
-        row.setLayoutParams(lp);
-
-        TextView name = new TextView(activity);
-        name.setText(full);
-        name.setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f);
-        name.setTextColor(SlothTheme.ink());
-        row.addView(name, new LinearLayout.LayoutParams(0,
-                ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
-
-        if (current) {
-            // a tick, not just a tinted outline: the selected row has to be obvious
-            TextView tick = text(activity, "\u2713", 15f, SlothTheme.accent(), true);
-            tick.setContentDescription("Current palette");
-            LinearLayout.LayoutParams tickLp = new LinearLayout.LayoutParams(
-                    ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
-            tickLp.rightMargin = dp(activity, 8);
-            row.addView(tick, tickLp);
-        }
-
-        int[] swatches = {SlothTheme.bg(which), SlothTheme.card(which), SlothTheme.accent(which)};
-        for (int colour : swatches) {
-            View dot = new View(activity);
-            GradientDrawable shape = new GradientDrawable();
-            shape.setShape(GradientDrawable.OVAL);
-            shape.setColor(colour);
-            shape.setStroke(Math.max(1, dp(activity, 1)), SlothTheme.lineAt(0x33));
-            dot.setBackground(shape);
-            LinearLayout.LayoutParams dotLp = new LinearLayout.LayoutParams(
-                    dp(activity, 16), dp(activity, 16));
-            dotLp.leftMargin = dp(activity, 6);
-            row.addView(dot, dotLp);
-        }
-
-        row.setOnClickListener(new View.OnClickListener() {
             @Override
-            public void onClick(View v) {
+            public void pickPalette(int which) {
                 SlothTheme.select(activity, which);
                 // the choice is made, so the drawer gets out of the way: close it first,
                 // then rebuild the surface in the new palette next frame
@@ -1406,8 +1227,7 @@ public final class SlothShell {
                     }
                 });
             }
-        });
-        return row;
+        };
     }
 
     /**
@@ -1691,8 +1511,14 @@ public final class SlothShell {
 
     /** Give a picker somewhere to appear when it is opened from outside the drawer. */
     private static void ensureDrawerOpen(Activity activity) {
-        if (drawer != null && drawer.getLayoutParams().height <= 0) {
-            setDrawerHeight(activity, Math.max(dp(activity, 240), peekPx));
+        if (drawer == null) {
+            return;
+        }
+        // the top seat, from shut or from the strip: a list squeezed into the strip's 64 dp
+        // shows two rows of itself, and any other height is one the drawer cannot rest at
+        int full = fullSeat(activity);
+        if (drawer.getLayoutParams().height < full) {
+            setDrawerHeight(activity, full);
             openIntent = true;
         }
     }
@@ -2324,7 +2150,8 @@ public final class SlothShell {
         }
         hideSettingsPage(activity);
         if (drawer.getLayoutParams().height <= 0) {
-            animateTo(activity, Math.max(dp(activity, 240), peekPx));
+            // the menu is the way to everything, so it opens everything: the top seat
+            animateTo(activity, fullSeat(activity));
         }
     }
 

@@ -3549,6 +3549,20 @@ public class SlothShellTest {
             shoot(activity, new java.io.File(dir, "06-palette.png"));
             findByViewTag(drawerOf(activity), "palette").setVisibility(View.GONE);
         }
+        {
+            SlothShell.openWidgetChooser(activity);
+            settle();
+            shoot(activity, new java.io.File(dir, "06b-widgets.png"));
+            findByViewTag(drawerOf(activity), "widgets").setVisibility(View.GONE);
+        }
+        {
+            driveHeight(activity, 0);
+            SlothShell.openFind(activity);
+            settle();
+            shoot(activity, new java.io.File(dir, "06c-find.png"));
+            SlothShell.closeFind(activity);
+            settle();
+        }
 
         driveHeight(activity, 0);
         settle();
@@ -3814,6 +3828,38 @@ public class SlothShellTest {
         } catch (Exception e) {
             throw new AssertionError(e);
         }
+    }
+
+    /** A list opened from the tab strip gets the whole drawer, not the strip's 64 dp. */
+    @Test
+    public void aPickerOpenedFromTheStripGetsTheFullDrawer() throws Exception {
+        TestActivity activity = build();
+        SlothShell.own(activity);
+        settle();
+        int peek = Math.round(64 * activity.getResources().getDisplayMetrics().density);
+        driveHeight(activity, peek);
+        settle();
+        SlothShell.openWidgetChooser(activity);
+        settle();
+        assertEquals("the list opens on the top seat", fullSeatOf(activity),
+                drawerOf(activity).getLayoutParams().height);
+    }
+
+    /** The menu opens the drawer onto one of its seats, never a height between them. */
+    @Test
+    public void theMenuOpensTheDrawerOnItsTopSeat() throws Exception {
+        TestActivity activity = build();
+        SlothShell.own(activity);
+        settle();
+        SlothShell.openDrawer(activity);
+        settle();
+        assertEquals(fullSeatOf(activity), drawerOf(activity).getLayoutParams().height);
+    }
+
+    private static int fullSeatOf(Activity activity) throws Exception {
+        java.lang.reflect.Method full = SlothShell.class.getDeclaredMethod("fullSeat", Activity.class);
+        full.setAccessible(true);
+        return (Integer) full.invoke(null, activity);
     }
 
     @Test
