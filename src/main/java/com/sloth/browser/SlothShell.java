@@ -520,6 +520,7 @@ public final class SlothShell {
         lastProbe = 0;
         SlothCover.forget();
         SlothLoad.forget();
+        onboardingFinished = false;
         owner = null;
     }
 
@@ -891,7 +892,7 @@ public final class SlothShell {
 
             @Override
             public void onTap() {
-                if (drawer == null) {
+                if (drawer == null || blockForFirstRun(activity)) {
                     return;
                 }
                 boolean open = drawer.getLayoutParams().height > dp(activity, 24);
@@ -2064,6 +2065,67 @@ public final class SlothShell {
         return url.length() > 0 ? url : null;
     }
 
+    /**
+     * While the app's welcome screen is up, the shell stays out of its way: the panel is
+     * hidden and the drawer stays shut. Returns true when the caller should not open it.
+     */
+    static boolean blockForFirstRun(Activity activity) {
+        boolean showing = firstRunShowing(activity);
+        if (surfaceView != null) {
+            int want = showing ? View.GONE : View.VISIBLE;
+            if (surfaceView.getVisibility() != want) {
+                surfaceView.setVisibility(want);
+                SlothLog.note(showing ? "stepped aside for first run" : "first run is over");
+            }
+        }
+        if (showing && drawer != null && drawer.getLayoutParams().height > 0) {
+            setDrawerHeight(activity, 0);
+        }
+        return showing;
+    }
+
+    /** Set once the app's onboardingDone flag is true, so the tick stops walking the tree. */
+    private static boolean onboardingFinished;
+
+    /** How many times the tree was walked for the welcome screen. The harness reads it. */
+    static int firstRunScansForTest;
+
+    /**
+     * The app's welcome screen, answered by {@link SlothFirstRun}. Once the app's own
+     * {@code onboardingDone} flag is set the answer is no, and the tree is not walked again.
+     */
+    static boolean firstRunShowing(Activity activity) {
+        if (activity == null || onboardingFinished) {
+            return false;
+        }
+        if (onboardingDone(activity)) {
+            onboardingFinished = true;
+            return false;
+        }
+        firstRunScansForTest++;
+        return SlothFirstRun.showing(activity.findViewById(android.R.id.content));
+    }
+
+    /** The app's settings flag. A missing one means the screen has to be looked at. */
+    private static boolean onboardingDone(Activity activity) {
+        Object settings = settingsObject(activity);
+        if (settings == null) {
+            return false;
+        }
+        try {
+            Object value = call(settings, "getOnboardingDone", new Class<?>[0], new Object[0]);
+            return value instanceof Boolean && (Boolean) value;
+        } catch (Throwable ignored) {
+            try {
+                java.lang.reflect.Field field = settings.getClass().getDeclaredField("onboardingDone");
+                field.setAccessible(true);
+                return field.getBoolean(settings);
+            } catch (Throwable missing) {
+                return false;
+            }
+        }
+    }
+
     /** Put the page's address on the bar: the host at rest, the whole URL to edit. */
     static void syncAddress(Activity activity) {
         if (topBar != null && activity != null) {
@@ -2180,7 +2242,7 @@ public final class SlothShell {
 
     /** Show the dashboard: the menu that used to be the app's drawer is this now. */
     static void openDrawer(Activity activity) {
-        if (drawer == null) {
+        if (drawer == null || blockForFirstRun(activity)) {
             return;
         }
         hideSettingsPage(activity);
@@ -2293,6 +2355,9 @@ public final class SlothShell {
 
             @Override
             public void showTabs() {
+                if (blockForFirstRun(activity)) {
+                    return;
+                }
                 // the count is a toggle for the strip: tap to see the tabs, tap again to put them away
                 int h = drawer == null ? 0 : drawer.getLayoutParams().height;
                 leaveSettings(activity);
@@ -2311,6 +2376,9 @@ public final class SlothShell {
 
             @Override
             public void showMenu() {
+                if (blockForFirstRun(activity)) {
+                    return;
+                }
                 int h = drawer == null ? 0 : drawer.getLayoutParams().height;
                 leaveSettings(activity);
                 animateTo(activity, h > peekPx + dp(activity, 8) ? 0 : fullSeat(activity));
@@ -3268,6 +3336,7 @@ public final class SlothShell {
         }
         try {
             syncAddress(activity);
+            blockForFirstRun(activity);
             // the app can leave the page at zero height on its own - a restart, a cleared
             // engine - and a black window with an address in it is the worst thing to hand
             // someone silently, so the tick checks rather than waits for a report
