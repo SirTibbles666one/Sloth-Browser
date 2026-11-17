@@ -78,7 +78,9 @@ final class SlothSettings {
                 onClose.run();
             }
         });
-        head.addView(back, lp(activity, 40, 40, 0, 0, 0, 0));
+        // a 48 dp box for the finger, the chevron drawn at its old 40 dp
+        back.setPadding(dp(activity, 4), dp(activity, 4), dp(activity, 4), dp(activity, 4));
+        head.addView(back, lp(activity, 48, 48, 0, 0, 0, 0));
 
         TextView title = text(activity, "Settings", 22f, SlothTheme.ink(), true);
         LinearLayout.LayoutParams titleLp = new LinearLayout.LayoutParams(
@@ -582,8 +584,12 @@ final class SlothSettings {
         row.setContentDescription(spoken == null ? name : spoken);
         row.setBackground(box(activity, Math.max(10, Math.round(SlothTheme.radius()) - 4),
                 SlothTheme.card(), SlothTheme.hairline(0x1A)));
+        // as tall as its words need, never shorter than 54 dp: a fixed height cut the second
+        // line in half at large text sizes
+        row.setMinimumHeight(dp(activity, 54));
+        row.setPadding(row.getPaddingLeft(), dp(activity, 8), row.getPaddingRight(), dp(activity, 8));
         LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, dp(activity, 54));
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
         lp.bottomMargin = dp(activity, 8);
         row.setLayoutParams(lp);
 

@@ -752,7 +752,32 @@ public final class SlothShell {
         if (paletteSheet != null) {
             sheet.addView(paletteSheet);
         }
+        // a list over the drawer covers it for the eye; a screen reader must not walk under it
+        final View covered = holder;
+        sheet.getViewTreeObserver().addOnGlobalLayoutListener(
+                new android.view.ViewTreeObserver.OnGlobalLayoutListener() {
+                    @Override
+                    public void onGlobalLayout() {
+                        hideCovered(covered);
+                    }
+                });
         return sheet;
+    }
+
+    /** The same, found from the drawer: for the places a list opens or closes. */
+    static void hideCovered() {
+        hideCovered(drawer == null ? null : drawer.findViewWithTag("drawer-holder"));
+    }
+
+    /** While a list covers the drawer, what is under it is hidden from a screen reader. */
+    static void hideCovered(View holder) {
+        boolean cover = (widgetSheet != null && widgetSheet.getVisibility() == View.VISIBLE)
+                || (paletteSheet != null && paletteSheet.getVisibility() == View.VISIBLE);
+        int want = cover ? View.IMPORTANT_FOR_ACCESSIBILITY_NO_HIDE_DESCENDANTS
+                : View.IMPORTANT_FOR_ACCESSIBILITY_AUTO;
+        if (holder != null && holder.getImportantForAccessibility() != want) {
+            holder.setImportantForAccessibility(want);
+        }
     }
 
     /** The drawer's content, wired to the sheet it lives in. */
@@ -785,6 +810,7 @@ public final class SlothShell {
                     widgetSheet.bringToFront();
                     widgetSheet.setVisibility(View.VISIBLE);
                     SlothPages.opened(widgetLayer());
+            hideCovered();
                 }
             }
         });
@@ -1767,6 +1793,7 @@ public final class SlothShell {
                 if (widgetSheet != null) {
                     widgetSheet.setVisibility(View.GONE);
                 }
+                hideCovered();
             }
         });
     }
@@ -2473,12 +2500,14 @@ public final class SlothShell {
         if (paletteSheet != null) {
             paletteSheet.bringToFront();
             paletteSheet.setVisibility(View.VISIBLE);
+            hideCovered();
             SlothPages.opened(layer("the palette list", paletteSheet, true, new Runnable() {
                 @Override
                 public void run() {
                     if (paletteSheet != null) {
                         paletteSheet.setVisibility(View.GONE);
                     }
+                    hideCovered();
                 }
             }));
             checkLayers("opened the palette list");
@@ -2491,6 +2520,7 @@ public final class SlothShell {
             widgetSheet.bringToFront();
             widgetSheet.setVisibility(View.VISIBLE);
             SlothPages.opened(widgetLayer());
+            hideCovered();
             checkLayers("opened the widget list");
         }
     }

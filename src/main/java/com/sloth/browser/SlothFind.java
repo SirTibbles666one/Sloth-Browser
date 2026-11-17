@@ -140,7 +140,7 @@ final class SlothFind {
         button.setContentDescription(description);
         button.setClickable(true);
         button.setFocusable(true);
-        int size = pixels(activity, 40);
+        int size = pixels(activity, 48);
         button.setLayoutParams(new LinearLayout.LayoutParams(size, size));
         SlothIcons mark = SlothIcons.decorative(activity, kind, 18, SlothTheme.ink());
         mark.setRotation(turn);

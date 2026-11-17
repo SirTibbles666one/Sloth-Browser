@@ -182,7 +182,7 @@ final class SlothStrip {
                 + ", hold to close");
         tile.setClickable(true);
         tile.setFocusable(true);
-        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(dp(44), dp(44));
+        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(dp(48), dp(48));
         lp.rightMargin = dp(8);
         tile.setLayoutParams(lp);
         return tile;
@@ -201,7 +201,7 @@ final class SlothStrip {
         FrameLayout.LayoutParams iconLp = new FrameLayout.LayoutParams(dp(16), dp(16));
         iconLp.gravity = Gravity.CENTER;
         box.addView(SlothIcons.decorative(activity, kind, 16, ink), iconLp);
-        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(dp(44), dp(44));
+        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(dp(48), dp(48));
         lp.rightMargin = dp(8);
         box.setLayoutParams(lp);
         return box;

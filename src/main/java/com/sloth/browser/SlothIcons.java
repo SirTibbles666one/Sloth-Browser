@@ -86,13 +86,15 @@ final class SlothIcons extends View {
 
     @Override
     protected void onDraw(Canvas canvas) {
-        int w = getWidth();
-        int h = getHeight();
-        if (w == 0 || h == 0) {
+        // drawn inside the padding: a control can be given a finger-sized box without the mark
+        // in it growing to fill the box
+        int w = getWidth() - getPaddingLeft() - getPaddingRight();
+        int h = getHeight() - getPaddingTop() - getPaddingBottom();
+        if (w <= 0 || h <= 0) {
             return;
         }
-        float cx = w / 2f;
-        float cy = h / 2f;
+        float cx = getPaddingLeft() + w / 2f;
+        float cy = getPaddingTop() + h / 2f;
         float r = Math.min(w, h) * 0.5f;
         paint.setStrokeWidth(Math.max(2.0f, r * 0.17f));
         path.reset();
