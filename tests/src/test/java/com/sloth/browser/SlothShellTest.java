@@ -458,6 +458,9 @@ public class SlothShellTest {
     @Test
     public void thePageFollowsByTranslationWhileDragging() throws Exception {
         TestActivity activity = build();
+        // push mode, the other choice in Settings: this is the test of how it pushes
+        activity.getSharedPreferences(SlothShell.SHELL_PREFS, android.content.Context.MODE_PRIVATE)
+                .edit().putBoolean("drawerOverPage", false).commit();
         SlothShell.own(activity);
         driveHeight(activity, peekHeight(activity) * 4);
         settle();
@@ -1076,6 +1079,16 @@ public class SlothShellTest {
                 SlothSeats.choose(seats, 400, 0f, 72, 8));
         assertEquals("projection can carry it past the nearest seat", 800,
                 SlothSeats.choose(seats, 700, 0.5f, 72, 8));
+    }
+
+    /** Let go still on the strip and it stays; only the strip's lower half shuts the drawer. */
+    @Test
+    public void aStillReleaseOnTheStripStaysOnTheStrip() {
+        int[] seats = {0, 72, 400};
+        assertEquals("on the strip", 72, SlothSeats.choose(seats, 72, 0f, 72, 8));
+        assertEquals("just past it", 72, SlothSeats.choose(seats, 92, 0f, 72, 8));
+        assertEquals("upper half of the strip", 72, SlothSeats.choose(seats, 40, 0f, 72, 8));
+        assertEquals("lower half shuts", 0, SlothSeats.choose(seats, 35, 0f, 72, 8));
     }
 
     /** One seat only: the arithmetic still answers something sane. */
@@ -2501,6 +2514,9 @@ public class SlothShellTest {
     @Test
     public void theDrawerPushesThePageInsteadOfCoveringIt() {
         TestActivity activity = build();
+        // push mode, the other choice in Settings: this is the test of how it pushes
+        activity.getSharedPreferences(SlothShell.SHELL_PREFS, android.content.Context.MODE_PRIVATE)
+                .edit().putBoolean("drawerOverPage", false).commit();
         SlothShell.own(activity);
         View appRoot = ((ViewGroup) activity.findViewById(android.R.id.content)).getChildAt(0);
         int resting = appRoot.getPaddingTop();
@@ -6591,9 +6607,9 @@ public class SlothShellTest {
      * it stands, recorded before its motion moved out of SlothShell. A row that changes is a
      * change in how the drawer feels, made on purpose or not at all.
      *
-     * <p>One row is recorded as it is, not as it should be: a still release at or just past the
-     * strip (peek +20 dp, speed 0) shuts the drawer. See SlothSeats: the "near the shut end"
-     * band reaches peek + 2 slop + 4 px.</p>
+     * <p>Changed on purpose once, 17 Nov 2026: a still or slow release on the strip, or just
+     * past it, used to shut the drawer. It rests on the strip now; only a still release in the
+     * strip's lower half shuts it (three rows, from peek at +20 and -20 dp).</p>
      */
     private static final String[][] LANDINGS = {
             {"shut", "20", "0.0", "shut"},
@@ -6616,17 +6632,17 @@ public class SlothShellTest {
             {"shut", "-150", "1.5", "peek"},
             {"shut", "-150", "-0.3", "shut"},
             {"shut", "-150", "-1.5", "shut"},
-            {"peek", "20", "0.0", "shut"},
+            {"peek", "20", "0.0", "peek"},
             {"peek", "20", "0.3", "peek"},
             {"peek", "20", "1.5", "full"},
-            {"peek", "20", "-0.3", "shut"},
+            {"peek", "20", "-0.3", "peek"},
             {"peek", "20", "-1.5", "shut"},
             {"peek", "150", "0.0", "peek"},
             {"peek", "150", "0.3", "full"},
             {"peek", "150", "1.5", "full"},
             {"peek", "150", "-0.3", "peek"},
             {"peek", "150", "-1.5", "shut"},
-            {"peek", "-20", "0.0", "shut"},
+            {"peek", "-20", "0.0", "peek"},
             {"peek", "-20", "0.3", "peek"},
             {"peek", "-20", "1.5", "peek"},
             {"peek", "-20", "-0.3", "shut"},
@@ -6813,13 +6829,13 @@ public class SlothShellTest {
         SlothShell.openSettingsPage(activity);
         settle();
         View page = findByViewTag(overlayOf(activity), "settings-page");
-        assertNotNull("pushes the page down by default", findChip(page, "Pushes the page down"));
-        tapChip(page, "Drawer");
-        assertTrue(SlothShell.drawerOverPage(activity));
-        assertNotNull(findChip(page, "Covers the page"));
+        assertNotNull("covers the page by default", findChip(page, "Covers the page"));
         tapChip(page, "Drawer");
         assertFalse(SlothShell.drawerOverPage(activity));
         assertNotNull(findChip(page, "Pushes the page down"));
+        tapChip(page, "Drawer");
+        assertTrue(SlothShell.drawerOverPage(activity));
+        assertNotNull(findChip(page, "Covers the page"));
     }
 
     /* ----------------------------------------------------------------------- keyboard */

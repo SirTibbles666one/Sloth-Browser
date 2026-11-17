@@ -91,7 +91,10 @@ final class SlothSeats {
                     target = 0;
                 }
             }
-        } else if (velocity <= 0.05f && height <= peek + slop * 2 + 4) {
+        } else if (velocity <= 0.05f && height < peek / 2) {
+            // let go still in the lower half of the strip: it shuts. Anywhere above that, a
+            // still release rests on the nearest seat - the strip included. The band used to
+            // reach past the strip, so letting go on the strip shut the drawer.
             target = 0;
         } else {
             float projected = height + velocity * PROJECTION_MS;
