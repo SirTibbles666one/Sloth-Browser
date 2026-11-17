@@ -6252,6 +6252,9 @@ public class SlothShellTest {
         assertEquals("a new tab has nothing to show", "", SlothShell.addressFor("", "https://example.org/"));
         assertEquals("about: pages are the app's", "about:blank",
                 SlothShell.addressFor("about:blank", "about:blank"));
+        assertEquals("a whole address in the app's field is newer than the engine's last start",
+                "https://example.org/page", SlothShell.addressFor("https://example.org/page",
+                        "https://example.org/"));
     }
 
     /** The app's field holds the host; a tap shows the whole URL the engine reported. */
@@ -6351,6 +6354,104 @@ public class SlothShellTest {
                 before, SlothShell.firstRunScansForTest);
         assertEquals("and the shell stays up", View.VISIBLE,
                 findByViewTag(overlayOf(activity), "surface").getVisibility());
+    }
+
+    /* -------------------------------------------------------------- events, not polling */
+
+    /** What the app's own navigation delegate saw, so forwarding can be checked. */
+    private static final class AppNavigation implements org.mozilla.geckoview.GeckoSession.NavigationDelegate {
+        final java.util.List<String> locations = new java.util.ArrayList<>();
+        final Object answer = new Object();
+
+        @Override
+        public void onLocationChange(org.mozilla.geckoview.GeckoSession session, String url) {
+            locations.add(url);
+        }
+
+        @Override
+        public Object onLoadRequest(org.mozilla.geckoview.GeckoSession session, Object request) {
+            return answer;
+        }
+    }
+
+    /** A move within the page starts no load; the engine still says where the page is now. */
+    @Test
+    public void aLocationChangeReachesTheBarWithoutATick() {
+        TestActivity activity = build();
+        org.mozilla.geckoview.GeckoSession session = pageWithSession(activity);
+        AppNavigation app = new AppNavigation();
+        session.setNavigationDelegate(app);
+        activity.binding.urlBar.setText("example.org");
+        SlothShell.own(activity);
+        SlothShell.tick();
+        assertNotSame("the session carries the shell's wrapper", app, session.getNavigationDelegate());
+
+        session.getNavigationDelegate().onLocationChange(session, "https://example.org/guide#feeding");
+        org.robolectric.shadows.ShadowLooper.idleMainLooper();
+        EditText field = findAddress(overlayOf(activity));
+        field.requestFocus();
+        assertEquals("the whole location, the anchor too", "https://example.org/guide#feeding",
+                field.getText().toString());
+        assertEquals("the app heard it", java.util.Collections.singletonList(
+                "https://example.org/guide#feeding"), app.locations);
+        assertSame("and its answers come back unchanged", app.answer,
+                session.getNavigationDelegate().onLoadRequest(session, "req"));
+    }
+
+    /** A session the app gave no navigation delegate is not handed one that answers nothing. */
+    @Test
+    public void noNavigationDelegateIsInventedForTheApp() {
+        TestActivity activity = build();
+        org.mozilla.geckoview.GeckoSession session = pageWithSession(activity);
+        SlothShell.own(activity);
+        SlothShell.tick();
+        assertNull(session.getNavigationDelegate());
+    }
+
+    /** Ten events before the next frame cost one sync. */
+    @Test
+    public void aBurstOfEventsCostsOneSync() {
+        TestActivity activity = build();
+        org.mozilla.geckoview.GeckoSession session = pageWithSession(activity);
+        SlothShell.own(activity);
+        SlothShell.tick();
+        org.robolectric.shadows.ShadowLooper.idleMainLooper();
+        int before = SlothShell.syncsForTest;
+        org.mozilla.geckoview.GeckoSession.ProgressDelegate load = session.getProgressDelegate();
+        load.onPageStart(session, "https://example.org/");
+        for (int p = 10; p <= 90; p += 10) {
+            load.onProgressChange(session, p);
+        }
+        org.robolectric.shadows.ShadowLooper.idleMainLooper();
+        assertEquals("one sync for the whole burst", before + 1, SlothShell.syncsForTest);
+    }
+
+    /** The app writes the page's address into its own field first: that alone updates the bar. */
+    @Test
+    public void theAppsAddressFieldUpdatesTheBarAtOnce() {
+        TestActivity activity = build();
+        SlothShell.own(activity);
+        SlothShell.tick();
+        int caught = SlothShell.backstopCatches;
+        activity.binding.urlBar.setText("https://other.example/x");
+        org.robolectric.shadows.ShadowLooper.idleMainLooper();
+        assertEquals("other.example", findAddress(overlayOf(activity)).getText().toString());
+        SlothShell.tick();
+        assertEquals("nothing left for the backstop to find", caught, SlothShell.backstopCatches);
+    }
+
+    /** A change no event reported is found by the tick, once, and counted. */
+    @Test
+    public void theBackstopCountsWhatTheEventsMissed() {
+        TestActivity activity = build();
+        SlothShell.own(activity);
+        SlothShell.tick();
+        int caught = SlothShell.backstopCatches;
+        activity.binding.btnBack.setEnabled(!activity.binding.btnBack.isEnabled());
+        SlothShell.tick();
+        assertEquals("the tick found it", caught + 1, SlothShell.backstopCatches);
+        SlothShell.tick();
+        assertEquals("and only once", caught + 1, SlothShell.backstopCatches);
     }
 
 }
