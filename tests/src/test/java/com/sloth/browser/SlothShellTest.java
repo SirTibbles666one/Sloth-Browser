@@ -6139,4 +6139,70 @@ public class SlothShellTest {
                 findChip(drawerOf(activity), "https://example.org/next"));
     }
 
+    /* -------------------------------------------------- the whole address, from the engine */
+
+    @Test
+    public void theEnginesWholeUrlIsUsedOnlyForTheSameHost() {
+        assertEquals("https://example.org/a?b=1",
+                SlothShell.addressFor("example.org", "https://example.org/a?b=1"));
+        assertEquals("www on either side is the same site", "https://www.example.org/a",
+                SlothShell.addressFor("example.org", "https://www.example.org/a"));
+        assertEquals("a redirect underway: the app's text stands", "other.org",
+                SlothShell.addressFor("other.org", "https://example.org/a"));
+        assertEquals("nothing reported yet", "example.org", SlothShell.addressFor("example.org", ""));
+        assertEquals("a new tab has nothing to show", "", SlothShell.addressFor("", "https://example.org/"));
+        assertEquals("about: pages are the app's", "about:blank",
+                SlothShell.addressFor("about:blank", "about:blank"));
+    }
+
+    /** The app's field holds the host; a tap shows the whole URL the engine reported. */
+    @Test
+    public void aTapRevealsTheWholeUrlNotJustTheHost() {
+        TestActivity activity = build();
+        org.mozilla.geckoview.GeckoSession session = pageWithSession(activity);
+        SlothShell.own(activity);
+        SlothShell.tick();
+        activity.binding.urlBar.setText("example.org");
+        session.getProgressDelegate().onPageStart(session, "https://example.org/articles/sloths?page=2");
+        SlothShell.tick();
+
+        EditText field = findAddress(overlayOf(activity));
+        assertEquals("at rest, the host", "example.org", field.getText().toString());
+        field.requestFocus();
+        assertEquals("tapped, the whole URL", "https://example.org/articles/sloths?page=2",
+                field.getText().toString());
+        assertEquals("and a page saved from the library keeps its path",
+                "https://example.org/articles/sloths?page=2", SlothShell.currentUrl(activity));
+    }
+
+    /** The padlock is decided by the engine's scheme, not by a host with the scheme dropped. */
+    @Test
+    public void anHttpPageIsAmberEvenWhenTheFieldShowsAHost() {
+        TestActivity activity = build();
+        org.mozilla.geckoview.GeckoSession session = pageWithSession(activity);
+        SlothShell.own(activity);
+        SlothShell.tick();
+        activity.binding.urlBar.setText("example.org");
+        session.getProgressDelegate().onPageStart(session, "http://example.org/");
+        SlothShell.tick();
+        SlothIcons lock = (SlothIcons) findByViewTag(overlayOf(activity), "site-icon");
+        assertEquals(0xFFE2A05A, lock.colour());
+        assertTrue(String.valueOf(lock.getContentDescription()).contains("not a secure"));
+    }
+
+    /** A page starting while someone types does not take the field from them. */
+    @Test
+    public void aPageStartDoesNotOverwriteTyping() {
+        TestActivity activity = build();
+        org.mozilla.geckoview.GeckoSession session = pageWithSession(activity);
+        SlothShell.own(activity);
+        SlothShell.tick();
+        activity.binding.urlBar.setText("example.org");
+        EditText field = findAddress(overlayOf(activity));
+        field.requestFocus();
+        field.setText("sloth fa");
+        session.getProgressDelegate().onPageStart(session, "https://example.org/next");
+        assertEquals("sloth fa", field.getText().toString());
+    }
+
 }
