@@ -69,10 +69,32 @@ PY
 
 echo "== align and sign"
 "$BUILD_TOOLS/zipalign" -p -f 4 "$WORK/clean.apk" "$WORK/aligned.apk"
-"$BUILD_TOOLS/apksigner" sign --ks "$KEYSTORE" --ks-key-alias sloth \
-    --ks-pass "pass:$KS_PASS" --key-pass "pass:$KEY_PASS" \
-    --min-sdk-version 26 --v1-signing-enabled true --v2-signing-enabled true \
-    --v3-signing-enabled true --out "$OUT/SlothBrowser-$VERSION.apk" "$WORK/aligned.apk"
+# Passwords go by environment, so they never appear in a process listing.
+export KS_PASS KEY_PASS
+if [ -n "${LINEAGE:-}" ]; then
+    # A rotation build: LINEAGE is a record (docs/signing/) in which OLD_KEYSTORE's key
+    # hands over to KEYSTORE's. A phone holding a build signed with the old key accepts
+    # this one without an uninstall. Android 9+ reads the rotation from the v3 block; the
+    # v1/v2 blocks must be signed by the oldest key, so Android 8 phones on the new key
+    # would refuse this file. Rotation builds are for phones on the old key only; public
+    # releases are built without LINEAGE.
+    : "${OLD_KEYSTORE:?a rotation build needs OLD_KEYSTORE, the oldest key in LINEAGE}"
+    : "${OLD_PASS:?set OLD_PASS}"
+    export OLD_PASS
+    "$BUILD_TOOLS/apksigner" sign \
+        --ks "$OLD_KEYSTORE" --ks-key-alias sloth --ks-pass env:OLD_PASS --key-pass env:OLD_PASS \
+        --next-signer --ks "$KEYSTORE" --ks-key-alias sloth \
+        --ks-pass env:KS_PASS --key-pass env:KEY_PASS \
+        --lineage "$LINEAGE" --rotation-min-sdk-version 28 \
+        --min-sdk-version 26 --v1-signing-enabled true --v2-signing-enabled true \
+        --v3-signing-enabled true \
+        --out "$OUT/SlothBrowser-$VERSION.apk" "$WORK/aligned.apk"
+else
+    "$BUILD_TOOLS/apksigner" sign --ks "$KEYSTORE" --ks-key-alias sloth \
+        --ks-pass env:KS_PASS --key-pass env:KEY_PASS \
+        --min-sdk-version 26 --v1-signing-enabled true --v2-signing-enabled true \
+        --v3-signing-enabled true --out "$OUT/SlothBrowser-$VERSION.apk" "$WORK/aligned.apk"
+fi
 
 echo "== gates"
 # shell_refs refuses a built shell: the names it checks are string literals in our own
