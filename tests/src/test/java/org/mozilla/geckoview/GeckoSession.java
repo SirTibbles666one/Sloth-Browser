@@ -16,6 +16,26 @@ public class GeckoSession {
         }
     }
 
+    /** The engine's shape for locations: onLocationChange names the URL the page is at now. */
+    public interface NavigationDelegate {
+        default void onLocationChange(GeckoSession session, String url) {
+        }
+
+        default Object onLoadRequest(GeckoSession session, Object request) {
+            return null;
+        }
+    }
+
+    private NavigationDelegate navigationDelegate;
+
+    public NavigationDelegate getNavigationDelegate() {
+        return navigationDelegate;
+    }
+
+    public void setNavigationDelegate(NavigationDelegate delegate) {
+        navigationDelegate = delegate;
+    }
+
     private ProgressDelegate progressDelegate;
     public int stops;
 

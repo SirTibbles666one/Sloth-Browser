@@ -521,6 +521,8 @@ public final class SlothShell {
         SlothCover.forget();
         SlothLoad.forget();
         onboardingFinished = false;
+        syncPosted = false;
+        synced = "";
         owner = null;
     }
 
@@ -1983,6 +1985,10 @@ public final class SlothShell {
             // what the last drag cost. A drag that writes the sheet sixty times and
             // re-lays-out the page sixty times is smooth only if the phone can afford it,
             // and this is the number that says which
+            // the events keep the bar current; the tick only checks. Every change it still
+            // finds is one the events missed, and this is the number that says how many
+            out.append("sync: ").append(syncsForTest).append(" syncs, ").append(backstopCatches)
+                    .append(" changes caught by the backstop tick\n");
             out.append("drag: ").append(dragWrites).append(" sheet writes, ")
                     .append(pageRelayouts).append(" page relayouts, since the app started\n");
             out.append("last drag: ").append(traceFrom < 0 ? "none yet"
@@ -2144,6 +2150,109 @@ public final class SlothShell {
                 return false;
             }
         }
+    }
+
+    /* ---------------------------------------------------------------------- sync */
+
+    /** A sync is waiting for the next turn of the loop. */
+    private static boolean syncPosted;
+    /** What the bar and drawer showed after the last sync, as one comparable line. */
+    private static String synced = "";
+    /** Changes the events missed and the tick found. Diagnostics shows it. */
+    static int backstopCatches;
+    /** Syncs run, for the harness. */
+    static int syncsForTest;
+
+    /**
+     * Something the bar or drawer shows may have changed: bring them up to date on the next
+     * turn of the loop. Any number of requests before then cost one sync.
+     */
+    static void requestSync() {
+        if (syncPosted || owner == null) {
+            return;
+        }
+        syncPosted = true;
+        MAIN.post(new Runnable() {
+            @Override
+            public void run() {
+                syncPosted = false;
+                Activity activity = owner;
+                if (activity != null && !activity.isFinishing()) {
+                    sync(activity);
+                }
+            }
+        });
+    }
+
+    /** After an action the app answers on its own time: look now, and again shortly after. */
+    static void requestSyncAfterAction() {
+        requestSync();
+        MAIN.postDelayed(new Runnable() {
+            @Override
+            public void run() {
+                requestSync();
+            }
+        }, 160);
+    }
+
+    /** Everything the bar and drawer show about the page and the tabs, in one place. */
+    static void sync(Activity activity) {
+        try {
+            syncsForTest++;
+            syncAddress(activity);
+            syncHistory(activity);
+            int count = tabCount(activity);
+            if (topBar != null) {
+                topBar.setTabCount(count);
+            }
+            if (board != null) {
+                board.onTabCount(count);
+                // the drawer's address line is the same fact as the bar's
+                board.onSite(topBar == null ? pageAddress(activity) : topBar.pageAddress());
+            }
+            if (peekShowing && strip != null) {
+                strip.fill(resolveStrip(activity));
+            }
+            synced = signature(activity);
+        } catch (Throwable t) {
+            SlothLog.warn("sync failed: " + t.getClass().getSimpleName());
+        }
+    }
+
+    /** One line of what sync() shows, cheap enough for every tick. */
+    private static String signature(Activity activity) {
+        View back = resolve(activity, "btnBack");
+        View forward = resolve(activity, "btnFwd");
+        return pageAddress(activity) + '|' + tabCount(activity)
+                + '|' + (back != null && back.isEnabled()) + (forward != null && forward.isEnabled())
+                + '|' + System.identityHashCode(SlothLoad.showing());
+    }
+
+    /** The app's own address fields being watched, so a change there syncs at once. */
+    private static final java.util.WeakHashMap<View, Boolean> watchedAddress =
+            new java.util.WeakHashMap<>();
+
+    /** Watch the app's address field: the app writes the page's address there first. */
+    private static void watchAppAddress(Activity activity) {
+        View real = resolve(activity, "urlBar");
+        if (!(real instanceof EditText) || watchedAddress.containsKey(real)) {
+            return;
+        }
+        watchedAddress.put(real, Boolean.TRUE);
+        ((EditText) real).addTextChangedListener(new android.text.TextWatcher() {
+            @Override
+            public void beforeTextChanged(CharSequence s, int start, int count, int after) {
+            }
+
+            @Override
+            public void onTextChanged(CharSequence s, int start, int before, int count) {
+            }
+
+            @Override
+            public void afterTextChanged(android.text.Editable s) {
+                requestSync();
+            }
+        });
     }
 
     /** Put the page's address on the bar: the host at rest, the whole URL to edit. */
@@ -2351,7 +2460,7 @@ public final class SlothShell {
                 // drawn from the session's own state, so a tab switch shows that tab's load
                 SlothLoad.State load = SlothLoad.state(session);
                 topBar.showLoad(load.loading, load.progress);
-                syncAddress(owner);
+                requestSync();
             }
         }
     };
@@ -2437,12 +2546,14 @@ public final class SlothShell {
             @Override
             public void pick(View chip) {
                 chip.performClick();
+                requestSyncAfterAction();
                 animateTo(activity, 0);
             }
 
             @Override
             public void newTab() {
                 tap(activity, "btnPlus");
+                requestSyncAfterAction();
                 animateTo(activity, 0);
             }
 
@@ -2454,6 +2565,7 @@ public final class SlothShell {
                     return false;
                 }
                 close.performClick();
+                requestSyncAfterAction();
                 SlothLog.note("closed a tab from the strip");
                 if (strip != null) {
                     strip.fill(resolveStrip(activity));
@@ -3304,6 +3416,7 @@ public final class SlothShell {
         int next = Math.max(0, Math.min(count - 1, active + direction));
         if (next != active) {
             tabs.getChildAt(next).performClick();
+            requestSyncAfterAction();
         }
     }
 
@@ -3355,7 +3468,6 @@ public final class SlothShell {
             return;
         }
         try {
-            syncAddress(activity);
             blockForFirstRun(activity);
             // the app can leave the page at zero height on its own - a restart, a cleared
             // engine - and a black window with an address in it is the worst thing to hand
@@ -3363,20 +3475,14 @@ public final class SlothShell {
             ensurePageVisible(activity);
             // asked once the window is laid out: this is the only evidence the request worked
             checkEdgeWindow(activity);
-            syncHistory(activity);
             // the session changes with the tab, and the app may set its own delegate later
             SlothLoad.watch(activity, PROGRESS);
-            if (board != null && topBar != null) {
-                // the drawer's address line is the same fact as the bar's, so it is kept
-                // the same way: on the timer, not only when the drawer is rebuilt
-                board.onSite(topBar.pageAddress());
-            }
-            int count = tabCount(activity);
-            if (topBar != null) {
-                topBar.setTabCount(count);
-            }
-            if (board != null) {
-                board.onTabCount(count);
+            watchAppAddress(activity);
+            // the backstop: events should already have shown everything; a difference here is
+            // one they missed, counted so Diagnostics can say whether the tick is still needed
+            if (!signature(activity).equals(synced)) {
+                backstopCatches++;
+                sync(activity);
             }
             if (peekShowing && strip != null) {
                 // the strip is the tabs: it cannot be a frame behind them
@@ -3397,18 +3503,11 @@ public final class SlothShell {
     private static void refresh(Activity activity) {
         try {
             ensurePageVisible(activity);
-            syncAddress(activity);
-
             if (board != null) {
                 board.mirror(activity);
             }
-            if (topBar != null) {
-                topBar.setTabCount(tabCount(activity));
-            }
-            if (board != null) {
-                board.onSite(thisSite(activity));
-                board.onTabCount(tabCount(activity));
-            }
+            watchAppAddress(activity);
+            sync(activity);
             tintStatusBar(activity);
             if (settingsOpen) {
                 // the app closes its own panel on back; if it did, stop lending it

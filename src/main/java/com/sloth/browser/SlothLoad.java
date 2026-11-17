@@ -37,13 +37,19 @@ final class SlothLoad {
     }
 
     private static final String DELEGATE = "org.mozilla.geckoview.GeckoSession$ProgressDelegate";
+    private static final String NAV = "org.mozilla.geckoview.GeckoSession$NavigationDelegate";
     private static final String MARK = "SlothLoad wrapper";
+    private static final String NAV_MARK = "SlothLoad navigation wrapper";
 
     private static final Map<Object, State> STATES = new WeakHashMap<>();
     /** The wrapper each session carries, so the tick can tell ours from one the app set. */
     private static final Map<Object, Object> WRAPPERS = new WeakHashMap<>();
+    private static final Map<Object, Object> NAV_WRAPPERS = new WeakHashMap<>();
     private static WeakReference<Object> showing = new WeakReference<>(null);
     private static Listener listener;
+    /** Each "unavailable" is said once, not at every tick. */
+    private static boolean loadsMissingSaid;
+    private static boolean locationsMissingSaid;
 
     private SlothLoad() {
     }
@@ -69,6 +75,7 @@ final class SlothLoad {
             return false;
         }
         boolean wrapped = attach(session);
+        attachNavigation(session);
         if (session != null && session != showing.get()) {
             showing = new WeakReference<>(session);
             tell(session);
@@ -135,7 +142,88 @@ final class SlothLoad {
                     : "watching page loads beside the browser's own");
             return true;
         } catch (Throwable t) {
-            SlothLog.warn("page loads unavailable: " + t.getClass().getSimpleName());
+            if (!loadsMissingSaid) {
+                loadsMissingSaid = true;
+                SlothLog.warn("page loads unavailable: " + t.getClass().getSimpleName());
+            }
+            return false;
+        }
+    }
+
+    /**
+     * Follow the page's location through the app's navigation delegate.
+     *
+     * <p>{@code onLocationChange} is the engine saying which URL the page is at now, including
+     * a move within the page (a link to an anchor, a site that rewrites its own address) that
+     * starts no load. The app answers every other navigation question - which links open,
+     * which are refused - so a session with no delegate of the app's is left alone rather than
+     * given one that answers nothing; and everything is forwarded, return values included.</p>
+     */
+    static boolean attachNavigation(final Object session) {
+        if (session == null) {
+            return false;
+        }
+        try {
+            Object current = SlothShell.call(session, "getNavigationDelegate", new Class<?>[0], new Object[0]);
+            if (current == null) {
+                return false;
+            }
+            synchronized (NAV_WRAPPERS) {
+                if (current == NAV_WRAPPERS.get(session)) {
+                    return true;
+                }
+            }
+            if (NAV_MARK.equals(String.valueOf(current))) {
+                synchronized (NAV_WRAPPERS) {
+                    NAV_WRAPPERS.put(session, current);
+                }
+                return true;
+            }
+            Class<?> type = Class.forName(NAV, false, session.getClass().getClassLoader());
+            final Object forwardTo = current;
+            final WeakReference<Object> owner = new WeakReference<>(session);
+            Object proxy = java.lang.reflect.Proxy.newProxyInstance(type.getClassLoader(),
+                    new Class<?>[]{type}, new java.lang.reflect.InvocationHandler() {
+                        @Override
+                        public Object invoke(Object self, java.lang.reflect.Method method,
+                                             Object[] args) throws Throwable {
+                            if (method.getDeclaringClass() == Object.class) {
+                                String name = method.getName();
+                                if ("equals".equals(name)) {
+                                    return args != null && self == args[0];
+                                }
+                                if ("hashCode".equals(name)) {
+                                    return System.identityHashCode(self);
+                                }
+                                return NAV_MARK;
+                            }
+                            Object mine = owner.get();
+                            if ("onLocationChange".equals(method.getName()) && mine != null
+                                    && args != null && args.length > 1 && args[0] == mine
+                                    && args[1] instanceof String) {
+                                state(mine).url = (String) args[1];
+                                if (mine == showing.get()) {
+                                    tell(mine);
+                                }
+                            }
+                            try {
+                                return method.invoke(forwardTo, args);
+                            } catch (java.lang.reflect.InvocationTargetException wrapped) {
+                                throw wrapped.getCause();
+                            }
+                        }
+                    });
+            SlothShell.call(session, "setNavigationDelegate", new Class<?>[]{type}, new Object[]{proxy});
+            synchronized (NAV_WRAPPERS) {
+                NAV_WRAPPERS.put(session, proxy);
+            }
+            SlothLog.note("following page locations");
+            return true;
+        } catch (Throwable t) {
+            if (!locationsMissingSaid) {
+                locationsMissingSaid = true;
+                SlothLog.warn("page locations unavailable: " + t.getClass().getSimpleName());
+            }
             return false;
         }
     }
