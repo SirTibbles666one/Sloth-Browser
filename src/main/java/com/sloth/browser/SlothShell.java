@@ -2960,6 +2960,9 @@ public final class SlothShell {
         // and the scene slides as the sheet comes out, so the sheet is in front of it
         if (backdropView != null) {
             backdropView.setDepth(h / (float) Math.max(1, expandedPx));
+            // the content ends where the board does, or where the drawer does if it is shorter
+            int shown = measuredContentH > 0 ? Math.min(h, measuredContentH) : h;
+            backdropView.setContentBottom(surfaceBarPx + shown);
         }
 
         if (was == 0 && h > 0 && board != null) {

@@ -51,6 +51,25 @@ final class SlothBackdrop extends View {
         return Math.max(0f, Math.min(1f, t));
     }
 
+    /**
+     * How much of the sloth fits below the panel's content, 0 to 1.
+     *
+     * <p>He hangs in the empty space under the last row. Placed by the panel's height alone, a
+     * full drawer put him behind its tiles - his face a dark smudge between two of them, his
+     * branch a grey bar under a row. Where the content reaches down to him he goes, fading over
+     * a third of his height so a drawer growing past its content brings him in gently.</p>
+     *
+     * @param top           where his head is drawn, in panel pixels
+     * @param contentBottom where the panel's content ends; 0 when nobody has said
+     */
+    static float slothRoom(float top, float size, float contentBottom) {
+        if (contentBottom <= 0f) {
+            return 1f;
+        }
+        float clear = top - contentBottom;
+        return Math.max(0f, Math.min(1f, clear / (size * 0.33f)));
+    }
+
     /** Body colour, mixed from the palette so he never looks pasted on. */
     static int bodyColour() {
         return SlothTheme.frosted()
@@ -66,6 +85,16 @@ final class SlothBackdrop extends View {
 
     /** 0 when the drawer is shut, 1 when it is fully out: the scene slides with it. */
     private float depth;
+    /** Where the panel's content ends, in this view's pixels; 0 when not known. */
+    private float contentBottom;
+
+    /** The shell says where its content ends, so the sloth keeps out from behind it. */
+    void setContentBottom(float y) {
+        if (Math.abs(y - contentBottom) >= 1f) {
+            contentBottom = y;
+            invalidate();
+        }
+    }
 
     /** How far the scene moves over the full travel, as a fraction of its own height. */
     static final float PARALLAX = 0.14f;
@@ -142,7 +171,9 @@ final class SlothBackdrop extends View {
         // he is sized by the width and placed by the height, so a panel that is only the bar
         // squeezed him into it: a head over the search field and a branch under it. He arrives
         // once there is room for him, fading in so a drag through the threshold has no pop
-        float presence = slothPresence(w, h);
+        float lift = h * PARALLAX * depth * 1.35f;
+        float headTop = slothY(h) - lift - slothSize(w) * 0.95f;
+        float presence = slothPresence(w, h) * slothRoom(headTop, slothSize(w), contentBottom);
         if (presence >= 0.999f) {
             drawSloth(canvas, w, h);
         } else if (presence > 0f) {
