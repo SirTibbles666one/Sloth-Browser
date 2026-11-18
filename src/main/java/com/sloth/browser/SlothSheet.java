@@ -198,7 +198,7 @@ final class SlothSheet {
         int[] seats = host.seats();
         int full = seats[seats.length - 1];
         int target = SlothSeats.choose(seats, host.height(), velocity, host.peek(), host.slop(),
-                traceFrom >= full - host.slop());
+                traceFrom >= full - host.slop(), true);
         traceTo = target;
         host.landing(target);
     }

@@ -3235,9 +3235,17 @@ public class SlothShellTest {
         bar.dispatchTouchEvent(MotionEvent.obtain(t, t + 60, MotionEvent.ACTION_UP, 200f, 120f, 0));
         settle();
 
+        // a short pull now rests where it was let go: anything below its edge is cut off by it
         View foot = findChip(drawerOf(activity), "Settings");
-        assertTrue("the footer is either absent or not laid out mid-drag",
-                foot == null || !isShown(foot));
+        if (foot != null && isShown(foot)) {
+            int[] f = new int[2];
+            int[] d = new int[2];
+            foot.getLocationOnScreen(f);
+            drawerOf(activity).getLocationOnScreen(d);
+            assertTrue("the footer is below the drawer's edge, not hanging inside it: footer "
+                    + f[1] + ", drawer ends " + (d[1] + drawerOf(activity).getHeight()),
+                    f[1] >= d[1] + drawerOf(activity).getHeight() - 1);
+        }
 
         long t2 = SystemClock.uptimeMillis();
         bar.dispatchTouchEvent(MotionEvent.obtain(t2, t2, MotionEvent.ACTION_DOWN, 200f, 40f, 0));
@@ -3625,6 +3633,38 @@ public class SlothShellTest {
         root.draw(canvas);
         try (java.io.FileOutputStream file = new java.io.FileOutputStream(out)) {
             bitmap.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, file);
+        }
+    }
+
+    /** The drawer let go between seats: a short pull, halfway, and past its content. */
+    @Test
+    @org.robolectric.annotation.GraphicsMode(org.robolectric.annotation.GraphicsMode.Mode.NATIVE)
+    @org.robolectric.annotation.Config(qualifiers = "w411dp-h891dp-xxhdpi")
+    public void renderFreeRestsForReview() throws Exception {
+        org.junit.Assume.assumeTrue("set SLOTH_RENDER=1 to run the render pass",
+                "1".equals(System.getenv("SLOTH_RENDER")));
+        java.io.File dir = new java.io.File("/opt/data/cache/scratch/shots");
+        dir.mkdirs();
+        SlothShell.testNavInset = 144;
+        TestActivity activity = build();
+        addTabs(activity, "Docs", "Mail", "News");
+        SlothShell.own(activity);
+        settle();
+        int peek = peekHeight(activity);
+        int full = fullSeat(activity);
+        java.lang.reflect.Method room = SlothShell.class.getDeclaredMethod("fullHeight", Activity.class);
+        room.setAccessible(true);
+        int limit = (Integer) room.invoke(null, activity);
+        java.lang.reflect.Method finish = SlothShell.class.getDeclaredMethod("finishDrag",
+                Activity.class, float.class);
+        finish.setAccessible(true);
+        int[] at = {peek + px(30), (peek + full) / 2, (full + limit) / 2};
+        String[] name = {"50-free-short.png", "51-free-half.png", "52-free-long.png"};
+        for (int i = 0; i < at.length; i++) {
+            driveHeight(activity, at[i]);
+            finish.invoke(null, activity, 0f);
+            settle();
+            shoot(activity, new java.io.File(dir, name[i]));
         }
     }
 
@@ -5972,26 +6012,77 @@ public class SlothShellTest {
         return (Integer) m.invoke(null, activity);
     }
 
-    /** Three seats: wherever a slow release lands, it rests shut, on the strip or at the top. */
+    /** A slow release past the strip stays where it was let go; below the strip it snaps. */
     @Test
-    public void aSlowReleaseRestsOnOneOfThreeSeats() throws Exception {
+    public void aSlowReleaseStaysWhereItIsPut() throws Exception {
         TestActivity activity = build();
         addTabs(activity, "Docs", "Mail");
         SlothShell.own(activity);
         settle();
         int peek = peekHeight(activity);
         int full = fullSeat(activity);
+        java.lang.reflect.Method room = SlothShell.class.getDeclaredMethod("fullHeight", Activity.class);
+        room.setAccessible(true);
+        int limit = (Integer) room.invoke(null, activity);
         java.lang.reflect.Method finish = SlothShell.class.getDeclaredMethod("finishDrag",
                 Activity.class, float.class);
         finish.setAccessible(true);
-        for (int h : new int[]{peek / 2, peek + px(30), (peek + full) / 2, full - px(30)}) {
+        for (int h : new int[]{peek + px(30), (peek + full) / 2, full - px(30), (full + limit) / 2, limit}) {
+            if (h <= full + px(8) && h >= full - px(8)) {
+                continue;
+            }
             driveHeight(activity, h);
             finish.invoke(null, activity, 0f);
             settle();
-            int rest = drawerOf(activity).getLayoutParams().height;
-            assertTrue("released at " + h + ", rested at " + rest + ", not a seat of {0, "
-                    + peek + ", " + full + "}", rest == 0 || rest == peek || rest == full);
+            assertEquals("let go at " + h + " (strip " + peek + ", top " + full + ", screen " + limit
+                    + ")", h, drawerOf(activity).getLayoutParams().height);
         }
+        driveHeight(activity, peek / 2 - 1);
+        finish.invoke(null, activity, 0f);
+        settle();
+        assertEquals("the lower half of the strip still shuts", 0, drawerOf(activity).getLayoutParams().height);
+        driveHeight(activity, peek - px(4));
+        finish.invoke(null, activity, 0f);
+        settle();
+        assertEquals("just under the strip rests on the strip", peek, drawerOf(activity).getLayoutParams().height);
+    }
+
+    /** The pure rule: free rests between the strip and the screen's end; flicks still travel. */
+    @Test
+    public void aFreeDrawerRestsWhereItIsLetGo() {
+        int[] seats = {0, 72, 400};
+        assertEquals("between strip and top", 250, SlothSeats.choose(seats, 250, 0f, 72, 8, false, true));
+        assertEquals("past the top seat, pulled down", 700, SlothSeats.choose(seats, 700, 0.3f, 72, 8, false, true));
+        assertEquals("near the top seat: the top seat", 400, SlothSeats.choose(seats, 405, 0f, 72, 8, false, true));
+        assertEquals("near the strip: the strip", 72, SlothSeats.choose(seats, 78, 0f, 72, 8, false, true));
+        assertEquals("a flick down still travels", 400, SlothSeats.choose(seats, 250, 1.5f, 72, 8, false, true));
+        assertEquals("a flick up still shuts", 0, SlothSeats.choose(seats, 250, -1.5f, 72, 8, false, true));
+        assertEquals("not free: the old nearest seat", 400, SlothSeats.choose(seats, 250, 0f, 72, 8, false, false));
+    }
+
+    /** A drawer left between seats keeps that height when the keyboard comes and goes. */
+    @Test
+    public void theKeyboardGivesBackTheHeightThePersonChose() throws Exception {
+        TestActivity activity = build();
+        SlothShell.own(activity);
+        settle();
+        int peek = peekHeight(activity);
+        int full = fullSeat(activity);
+        int mine = (peek + full) / 2;
+        java.lang.reflect.Method finish = SlothShell.class.getDeclaredMethod("finishDrag",
+                Activity.class, float.class);
+        finish.setAccessible(true);
+        driveHeight(activity, mine);
+        finish.invoke(null, activity, 0f);
+        settle();
+        assertEquals("rests where it was put", mine, drawerOf(activity).getLayoutParams().height);
+        int screen = activity.getResources().getDisplayMetrics().heightPixels;
+        keyboard(activity, screen - mine / 2);
+        settle();
+        keyboard(activity, 0);
+        settle();
+        assertEquals("keyboard gone, back at the person's height", mine,
+                drawerOf(activity).getLayoutParams().height);
     }
 
     @Test
@@ -6707,10 +6798,10 @@ public class SlothShellTest {
             {"shut", "20", "1.5", "peek"},
             {"shut", "20", "-0.3", "shut"},
             {"shut", "20", "-1.5", "shut"},
-            {"shut", "150", "0.0", "peek"},
-            {"shut", "150", "0.3", "peek"},
+            {"shut", "150", "0.0", "stays"},
+            {"shut", "150", "0.3", "stays"},
             {"shut", "150", "1.5", "full"},
-            {"shut", "150", "-0.3", "peek"},
+            {"shut", "150", "-0.3", "stays"},
             {"shut", "150", "-1.5", "shut"},
             {"shut", "-20", "0.0", "shut"},
             {"shut", "-20", "0.3", "peek"},
@@ -6722,15 +6813,15 @@ public class SlothShellTest {
             {"shut", "-150", "1.5", "peek"},
             {"shut", "-150", "-0.3", "shut"},
             {"shut", "-150", "-1.5", "shut"},
-            {"peek", "20", "0.0", "peek"},
-            {"peek", "20", "0.3", "peek"},
+            {"peek", "20", "0.0", "stays"},
+            {"peek", "20", "0.3", "stays"},
             {"peek", "20", "1.5", "full"},
-            {"peek", "20", "-0.3", "peek"},
+            {"peek", "20", "-0.3", "stays"},
             {"peek", "20", "-1.5", "shut"},
-            {"peek", "150", "0.0", "peek"},
-            {"peek", "150", "0.3", "full"},
+            {"peek", "150", "0.0", "stays"},
+            {"peek", "150", "0.3", "stays"},
             {"peek", "150", "1.5", "full"},
-            {"peek", "150", "-0.3", "peek"},
+            {"peek", "150", "-0.3", "stays"},
             {"peek", "150", "-1.5", "shut"},
             {"peek", "-20", "0.0", "peek"},
             {"peek", "-20", "0.3", "peek"},
@@ -6742,25 +6833,25 @@ public class SlothShellTest {
             {"peek", "-150", "1.5", "peek"},
             {"peek", "-150", "-0.3", "shut"},
             {"peek", "-150", "-1.5", "shut"},
-            {"full", "20", "0.0", "full"},
-            {"full", "20", "0.3", "full"},
+            {"full", "20", "0.0", "stays"},
+            {"full", "20", "0.3", "stays"},
             {"full", "20", "1.5", "full"},
-            {"full", "20", "-0.3", "full"},
+            {"full", "20", "-0.3", "stays"},
             {"full", "20", "-1.5", "shut"},
-            {"full", "150", "0.0", "full"},
-            {"full", "150", "0.3", "full"},
+            {"full", "150", "0.0", "stays"},
+            {"full", "150", "0.3", "stays"},
             {"full", "150", "1.5", "full"},
-            {"full", "150", "-0.3", "full"},
+            {"full", "150", "-0.3", "stays"},
             {"full", "150", "-1.5", "shut"},
-            {"full", "-20", "0.0", "full"},
-            {"full", "-20", "0.3", "full"},
+            {"full", "-20", "0.0", "stays"},
+            {"full", "-20", "0.3", "stays"},
             {"full", "-20", "1.5", "full"},
-            {"full", "-20", "-0.3", "full"},
+            {"full", "-20", "-0.3", "stays"},
             {"full", "-20", "-1.5", "shut"},
-            {"full", "-150", "0.0", "full"},
-            {"full", "-150", "0.3", "full"},
+            {"full", "-150", "0.0", "stays"},
+            {"full", "-150", "0.3", "stays"},
             {"full", "-150", "1.5", "full"},
-            {"full", "-150", "-0.3", "peek"},
+            {"full", "-150", "-0.3", "stays"},
             {"full", "-150", "-1.5", "shut"}
     };
 
@@ -6774,7 +6865,9 @@ public class SlothShellTest {
             settle();
             int land = landAfter(activity, row[0], Integer.parseInt(row[1]), Float.parseFloat(row[2]));
             String got = seatName(activity, land);
-            if (!got.equals(row[3])) {
+            // "stays": a slow let-go past the strip rests exactly where it was put
+            boolean right = "stays".equals(row[3]) ? got.startsWith("between:") : got.equals(row[3]);
+            if (!right) {
                 wrong.append("from ").append(row[0]).append(", ").append(row[1]).append(" dp at ")
                         .append(row[2]).append(": was ").append(row[3]).append(", now ").append(got)
                         .append('\n');
@@ -7208,11 +7301,11 @@ public class SlothShellTest {
         java.lang.reflect.Method room = SlothShell.class.getDeclaredMethod("fullHeight", Activity.class);
         room.setAccessible(true);
         int limit = (Integer) room.invoke(null, activity);
-        boolean onSeat = h == 0 || h == peek || h == full
-                || (SlothShell.imeInset > 0 && h == limit);
-        if (!onSeat) {
-            return "the drawer rests between seats: " + h + " (seats 0, " + peek + ", " + full
-                    + (SlothShell.imeInset > 0 ? ", keyboard room " + limit : "") + ")";
+        // shut, or anywhere from the strip to the screen's end: never a sliver under the strip
+        boolean resting = h == 0 || (h >= peek && h <= Math.max(limit, full));
+        if (!resting) {
+            return "the drawer rests outside its range: " + h + " (strip " + peek + ", top " + full
+                    + ", room " + limit + ")";
         }
         String layers = SlothShell.mislay();
         if (layers != null) {
