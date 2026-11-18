@@ -51,6 +51,21 @@ final class SlothSeats {
      */
     static int choose(int[] seats, int height, float velocity, int peek, int slop,
             boolean grabbedAtTop) {
+        return choose(seats, height, velocity, peek, slop, grabbedAtTop, false);
+    }
+
+    /**
+     * The same choice, for a drawer that may rest anywhere it is put.
+     *
+     * <p>With {@code free}, a slow release past the strip stays exactly where the finger left
+     * it: the person pulled it there on purpose, and snapping to the nearest seat is what
+     * made the drawer spring back up after a pull down. Flicks still travel seat to seat, and
+     * a slow release on or below the strip still rests on the strip or shuts.</p>
+     *
+     * @param free a slow release past the strip rests where it is
+     */
+    static int choose(int[] seats, int height, float velocity, int peek, int slop,
+            boolean grabbedAtTop, boolean free) {
         if (seats.length == 0) {
             return height;
         }
@@ -58,6 +73,11 @@ final class SlothSeats {
         if (height >= top - slop && grabbedAtTop && velocity < -FLICK) {
             // grabbed at the top and thrown up: nothing to open further, so it shuts
             return 0;
+        }
+        if (free && Math.abs(velocity) <= FLICK && height > peek + slop
+                && Math.abs(height - top) > slop) {
+            // let go slowly between the strip and the bottom of the screen: it stays there
+            return height;
         }
         if (height >= top - slop) {
             // the far end: an upward throw at the top has nowhere to go. Flicking up to close is

@@ -514,6 +514,7 @@ public final class SlothShell {
         overPage = null;
         imeInset = 0;
         shrunkForKeyboard = false;
+        restPx = 0;
         onboardingFinished = false;
         syncPosted = false;
         synced = "";
@@ -797,7 +798,7 @@ public final class SlothShell {
             public void run() {
                 // the widgets folded or unfolded: a drawer at the top grows or shrinks with
                 // them, so the shelf never opens under the bottom edge
-                if (drawer != null && !dragging()
+                if (drawer != null && !dragging() && restPx == 0
                         && drawer.getLayoutParams().height > peekPx + dp(activity, 8)) {
                     animateTo(activity, fullSeat(activity));
                 }
@@ -3022,6 +3023,8 @@ public final class SlothShell {
         }
         final int from = drawer.getLayoutParams().height;
         openIntent = target > 0;
+        // a rest between seats is the person's choice, kept until a seat is chosen
+        restPx = (target == 0 || target == peekPx || target == fullSeat(activity)) ? 0 : target;
         if (openIntent && from < dp(activity, 8) && scroller != null) {
             scroller.post(new Runnable() {
                 @Override
@@ -3188,6 +3191,20 @@ public final class SlothShell {
     private static boolean shrunkForKeyboard;
 
     /**
+     * Where the person left the drawer when they put it between seats, or 0 when it rests on
+     * one. The keyboard and the widgets folding give it back this height, not the top seat.
+     */
+    static int restPx;
+
+    /** The height an open drawer returns to: the person's own, or else the top seat. */
+    private static int homeHeight(Activity activity) {
+        if (restPx > peekPx) {
+            return Math.min(restPx, fullHeight(activity));
+        }
+        return fullSeat(activity);
+    }
+
+    /**
      * The keyboard came up or went down.
      *
      * <p>A field in the drawer - the note, the tab filter - brings the keyboard up over the
@@ -3209,7 +3226,7 @@ public final class SlothShell {
             if (h > room) {
                 shrunkForKeyboard = true;
                 setDrawerHeight(activity, room);
-            } else if (h > peekPx + dp(activity, 8) && h != fullSeat(activity)) {
+            } else if (restPx == 0 && h > peekPx + dp(activity, 8) && h != fullSeat(activity)) {
                 // the keyboard changed height while up - a suggestion strip came or went: an
                 // open drawer follows it rather than keeping the room the old keyboard left
                 setDrawerHeight(activity, fullSeat(activity));
@@ -3229,9 +3246,9 @@ public final class SlothShell {
             // whatever happened while the keyboard was up - the drawer shortened for it, or
             // opened at the room it left - an open drawer goes back to its real top seat
             shrunkForKeyboard = false;
-            int full = fullSeat(activity);
-            if (h > peekPx + dp(activity, 8) && h != full) {
-                animateTo(activity, full);
+            int home = homeHeight(activity);
+            if (h > peekPx + dp(activity, 8) && h != home) {
+                animateTo(activity, home);
             }
         }
     }
@@ -3245,8 +3262,8 @@ public final class SlothShell {
 
     /**
      * Where a released drag lands. The finger's own speed decides first - a flick
-     * should go where it was thrown - and a slow release goes to the nearest of the
-     * three resting sizes, projected forward a little so it does not feel sticky.
+     * should go where it was thrown - and a slow release past the strip stays where the
+     * finger left it. Only a slow release on or under the strip snaps, to the strip or shut.
      */
     private static void finishDrag(Activity activity, float velocity) {
         if (drawer != null && sheet != null) {
